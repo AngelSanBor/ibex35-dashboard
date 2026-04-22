@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
-import pandas_datareader.data as web
+import requests
+import io
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from ta.trend import SMAIndicator, EMAIndicator, MACD
@@ -36,54 +37,53 @@ html, body, [class*="css"] { font-family: 'Syne', sans-serif; }
 .monitor-chg.dn { color: #ff4d6d; font-size: 0.8rem; }
 section[data-testid="stSidebar"] { background: #0f0f18 !important; border-right: 1px solid #1a1a24; }
 section[data-testid="stSidebar"] * { color: #aaa !important; }
-.stNumberInput input, .stTextInput input { background: #1a1a24 !important; border: 1px solid #2a2a38 !important; color: #e8e8e8 !important; border-radius: 6px !important; font-family: 'DM Mono', monospace !important; }
+.stNumberInput input { background: #1a1a24 !important; border: 1px solid #2a2a38 !important; color: #e8e8e8 !important; border-radius: 6px !important; font-family: 'DM Mono', monospace !important; }
 .stButton button { background: #00e5a0 !important; color: #0a0a0f !important; font-family: 'Syne', sans-serif !important; font-weight: 700 !important; border: none !important; border-radius: 6px !important; }
 hr { border-color: #1a1a24 !important; }
 #MainMenu, footer, header { visibility: hidden; }
 </style>
 """, unsafe_allow_html=True)
 
-# Tickers Stooq (formato diferente a yfinance)
 IBEX_TICKERS = {
-    "Indra":        "IDR.MC",
-    "Santander":    "SAN.MC",
-    "BBVA":         "BBVA.MC",
-    "Inditex":      "ITX.MC",
-    "Iberdrola":    "IBE.MC",
-    "Repsol":       "REP.MC",
-    "Telefónica":   "TEF.MC",
-    "CaixaBank":    "CABK.MC",
-    "Amadeus":      "AMS.MC",
-    "ACS":          "ACS.MC",
-    "Acciona":      "ANA.MC",
-    "Naturgy":      "NTGY.MC",
-    "Endesa":       "ELE.MC",
-    "Mapfre":       "MAP.MC",
-    "Sabadell":     "SAB.MC",
-}
-
-STOOQ_MAP = {
-    "IDR.MC": "idr.mc", "SAN.MC": "san.mc", "BBVA.MC": "bbva.mc",
-    "ITX.MC": "itx.mc", "IBE.MC": "ibe.mc", "REP.MC": "rep.mc",
-    "TEF.MC": "tef.mc", "CABK.MC": "cabk.mc", "AMS.MC": "ams.mc",
-    "ACS.MC": "acs.mc", "ANA.MC": "ana.mc", "NTGY.MC": "ntgy.mc",
-    "ELE.MC": "ele.mc", "MAP.MC": "map.mc", "SAB.MC": "sab.mc",
-}
-
-PERIODO_DIAS = {
-    "1d": 2, "5d": 7, "1mo": 32, "3mo": 95,
-    "6mo": 185, "1y": 366, "2y": 730
+    "Indra":      "IDR.MC", "Santander": "SAN.MC", "BBVA":       "BBVA.MC",
+    "Inditex":    "ITX.MC", "Iberdrola": "IBE.MC", "Repsol":     "REP.MC",
+    "Telefónica": "TEF.MC", "CaixaBank": "CABK.MC","Amadeus":    "AMS.MC",
+    "ACS":        "ACS.MC", "Acciona":   "ANA.MC", "Naturgy":    "NTGY.MC",
+    "Endesa":     "ELE.MC", "Mapfre":    "MAP.MC", "Sabadell":   "SAB.MC",
 }
 
 NIVELES = {
     "IDR.MC": {"soportes": [47.00, 47.28], "resistencias": [52.64, 53.00, 54.32], "ma200": 54.82},
 }
 
+PERIODO_DIAS = {
+    "1sem": 7, "1mes": 32, "3mes": 95, "6mes": 185, "1año": 366, "2años": 730
+}
+
+@st.cache_data(ttl=300)
+def cargar_stooq(ticker, dias):
+    end = datetime.today()
+    start = end - timedelta(days=dias)
+    s = start.strftime("%Y%m%d")
+    e = end.strftime("%Y%m%d")
+    t = ticker.lower().replace(".mc", ".mc")
+    url = f"https://stooq.com/q/d/l/?s={t}&d1={s}&d2={e}&i=d"
+    try:
+        r = requests.get(url, timeout=10, headers={"User-Agent": "Mozilla/5.0"})
+        df = pd.read_csv(io.StringIO(r.text), parse_dates=["Date"], index_col="Date")
+        df = df.sort_index()
+        df.dropna(inplace=True)
+        if df.empty or len(df) < 2:
+            return None
+        return df
+    except Exception:
+        return None
+
 with st.sidebar:
     st.markdown("### 📊 CONFIGURACIÓN")
     ticker_nombre = st.selectbox("Acción", list(IBEX_TICKERS.keys()))
     ticker = IBEX_TICKERS[ticker_nombre]
-    periodo = st.selectbox("Periodo", ["1d","5d","1mo","3mo","6mo","1y","2y"], index=3)
+    periodo = st.selectbox("Periodo", list(PERIODO_DIAS.keys()), index=2)
     tipo_grafico = st.radio("Gráfico", ["Velas", "Línea"])
     st.markdown("---")
     st.markdown("### 📐 INDICADORES")
@@ -96,33 +96,18 @@ with st.sidebar:
     if st.button("🔄 Actualizar"):
         st.cache_data.clear()
 
-st.markdown(f"""
+st.markdown("""
 <div class="dash-header">
     <h1 class="dash-title">IBEX 35 · TRADING DESK</h1>
     <span class="dash-sub">datos en tiempo real · Stooq</span>
 </div>
 """, unsafe_allow_html=True)
 
-@st.cache_data(ttl=300)
-def cargar_datos(ticker, periodo):
-    dias = PERIODO_DIAS.get(periodo, 95)
-    end = datetime.today()
-    start = end - timedelta(days=dias)
-    stooq_ticker = STOOQ_MAP.get(ticker, ticker.lower())
-    try:
-        df = web.DataReader(stooq_ticker, "stooq", start, end)
-        if df is None or df.empty:
-            return None
-        df = df.sort_index()
-        df.dropna(inplace=True)
-        return df
-    except Exception as e:
-        return None
-
-df = cargar_datos(ticker, periodo)
+dias = PERIODO_DIAS[periodo]
+df = cargar_stooq(ticker, dias)
 
 if df is None or df.empty:
-    st.error(f"No se pudieron cargar datos para {ticker_nombre}. Intenta con otro periodo.")
+    st.error(f"No se pudieron cargar datos para {ticker_nombre}. Prueba otro periodo.")
     st.stop()
 
 precio_actual  = float(df["Close"].iloc[-1])
@@ -134,13 +119,14 @@ volumen_medio  = int(df["Volume"].mean()) if "Volume" in df.columns else 0
 
 chg_class = "positive" if cambio_pct >= 0 else "negative"
 chg_sign  = "▲" if cambio_pct >= 0 else "▼"
+
 st.markdown(f"""
 <div class="metric-grid">
     <div class="metric-card"><div class="metric-label">Acción</div><div class="metric-value">{ticker_nombre}</div></div>
     <div class="metric-card"><div class="metric-label">Precio actual</div><div class="metric-value">{precio_actual:.2f} €</div></div>
     <div class="metric-card"><div class="metric-label">Variación ({periodo})</div><div class="metric-value {chg_class}">{chg_sign} {abs(cambio_pct):.2f}%</div></div>
-    <div class="metric-card"><div class="metric-label">Máximo ({periodo})</div><div class="metric-value">{maximo:.2f} €</div></div>
-    <div class="metric-card"><div class="metric-label">Mínimo ({periodo})</div><div class="metric-value">{minimo:.2f} €</div></div>
+    <div class="metric-card"><div class="metric-label">Máximo</div><div class="metric-value">{maximo:.2f} €</div></div>
+    <div class="metric-card"><div class="metric-label">Mínimo</div><div class="metric-value">{minimo:.2f} €</div></div>
     <div class="metric-card"><div class="metric-label">Vol. medio</div><div class="metric-value">{volumen_medio:,}</div></div>
 </div>
 """, unsafe_allow_html=True)
@@ -269,13 +255,16 @@ st.markdown("#### 🌐 Monitor IBEX 35")
 def precios_ibex(tickers_dict):
     resultados = {}
     end = datetime.today()
-    start = end - timedelta(days=5)
+    start = end - timedelta(days=7)
+    s = start.strftime("%Y%m%d")
+    e = end.strftime("%Y%m%d")
     for nombre, t in tickers_dict.items():
         try:
-            stooq_t = STOOQ_MAP.get(t, t.lower())
-            d = web.DataReader(stooq_t, "stooq", start, end)
-            if d is not None and len(d) >= 2:
-                d = d.sort_index()
+            url = f"https://stooq.com/q/d/l/?s={t.lower()}&d1={s}&d2={e}&i=d"
+            r = requests.get(url, timeout=8, headers={"User-Agent": "Mozilla/5.0"})
+            d = pd.read_csv(io.StringIO(r.text), parse_dates=["Date"], index_col="Date")
+            d = d.sort_index().dropna()
+            if len(d) >= 2:
                 precio   = float(d["Close"].iloc[-1])
                 anterior = float(d["Close"].iloc[-2])
                 cambio   = ((precio - anterior) / anterior) * 100
@@ -301,6 +290,6 @@ if precios:
 
 st.markdown("---")
 with st.expander("📋 Datos históricos"):
-    df_mostrar = df[["Open","High","Low","Close"]].copy()
-    df_mostrar.columns = ["Apertura","Máximo","Mínimo","Cierre"]
+    cols_show = [c for c in ["Open","High","Low","Close"] if c in df.columns]
+    df_mostrar = df[cols_show].copy()
     st.dataframe(df_mostrar.round(2).iloc[::-1], use_container_width=True)
