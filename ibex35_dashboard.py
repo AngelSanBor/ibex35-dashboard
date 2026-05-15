@@ -130,7 +130,7 @@ st.markdown("""
 
         /* Fuentes globales más grandes */
         p, li { font-size: 0.98rem !important; line-height: 1.65 !important; }
-        h1 { font-size: 1.55rem !important; }
+        h1 { font-size: 1.55rem !important; margin-top: 0 !important; padding-top: 0 !important; }
         h2 { font-size: 1.25rem !important; }
         h3 { font-size: 1.1rem !important; }
         .sec-header { font-size: 0.74rem !important; letter-spacing: .1em !important; margin: 22px 0 10px !important; }
@@ -512,12 +512,26 @@ price_src = "✎ manual" if manual_price > 0 else "Yahoo Finance (~15 min retras
 chg       = price - prev
 chg_pct   = (chg / prev) * 100
 
-hc1, hc2, hc3 = st.columns([1, 1, 2])
-hc1.metric("Precio actual",   f"{price:.3f} €",
-           f"{'+' if chg >= 0 else ''}{chg:.3f} € ({chg_pct:+.2f}%)",
-           delta_color="normal" if chg >= 0 else "inverse")
-hc2.metric("Cierre anterior", f"{prev:.3f} €")
-hc3.caption(f"Fuente precio: {price_src}  ·  Cargado: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}")
+_chg_clr   = "#4ade80" if chg >= 0 else "#f87171"
+_chg_bg    = "rgba(20,83,45,0.3)" if chg >= 0 else "rgba(127,29,29,0.3)"
+_chg_arrow = "▲" if chg >= 0 else "▼"
+_src_txt   = f"✎ manual" if manual_price > 0 else f"Yahoo Finance · {datetime.now().strftime('%H:%M')}"
+st.markdown(
+    f'<div style="display:flex;align-items:flex-end;gap:32px;flex-wrap:wrap;margin-bottom:4px">'
+    f'<div>'
+    f'<div style="color:#2d3a5a;font-size:0.6rem;font-weight:900;letter-spacing:.12em;text-transform:uppercase;margin-bottom:4px">PRECIO ACTUAL</div>'
+    f'<div style="color:#eef2ff;font-size:2.1rem;font-weight:800;letter-spacing:-0.02em;line-height:1">{price:.3f} €</div>'
+    f'<div style="display:inline-block;background:{_chg_bg};border-radius:6px;padding:3px 10px;margin-top:6px">'
+    f'<span style="color:{_chg_clr};font-size:0.88rem;font-weight:700">'
+    f'{_chg_arrow} {chg:+.3f} € ({chg_pct:+.2f}%)</span></div>'
+    f'</div>'
+    f'<div style="padding-bottom:4px">'
+    f'<div style="color:#2d3a5a;font-size:0.6rem;font-weight:900;letter-spacing:.12em;text-transform:uppercase;margin-bottom:4px">CIERRE ANTERIOR</div>'
+    f'<div style="color:#9ca3af;font-size:1.4rem;font-weight:700;line-height:1">{prev:.3f} €</div>'
+    f'</div>'
+    f'</div>',
+    unsafe_allow_html=True,
+)
 
 st.divider()
 
@@ -525,6 +539,7 @@ st.divider()
 # PANEL DE MERCADO (siempre visible)
 # ─────────────────────────────────────────────
 render_market_panel()
+st.caption(f"Fuente precio: {price_src}  ·  Cargado: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}")
 
 # ─────────────────────────────────────────────
 # POSICIÓN — cálculo previo (sin renderizar)
