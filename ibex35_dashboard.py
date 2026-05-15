@@ -8,6 +8,7 @@ import os
 from datetime import datetime
 
 import streamlit as st
+import yfinance as yf
 
 from analysis import (
     analyze_tf, combined_verdict,
@@ -231,6 +232,131 @@ TIMEFRAMES = [
     {"label": "Entrada    (15 min · 5 días)",    "period": "5d",  "interval": "15m", "weight": 1},
 ]
 
+MARKET_TICKERS = {
+    "BZ=F":  {"name": "Brent",      "icon": "🛢"},
+    "^VIX":  {"name": "VIX",        "icon": "😨"},
+    "NQ=F":  {"name": "Nasdaq Fut", "icon": "📈"},
+    "YM=F":  {"name": "Dow Fut",    "icon": "📊"},
+}
+
+BRENT_ALERT_PCT = 1.5
+
+
+@st.cache_data(ttl=900)
+def get_market_context():
+    result = {}
+    for sym in MARKET_TICKERS:
+        try:
+            fi = yf.Ticker(sym).fast_info
+            price = fi.last_price
+            prev  = fi.previous_close
+            chg   = ((price - prev) / prev * 100) if prev else 0.0
+            result[sym] = {
+                "price":    price,
+                "prev":     prev,
+                "chg_pct":  chg,
+                "day_high": fi.day_high,
+                "day_low":  fi.day_low,
+            }
+        except Exception:
+            result[sym] = None
+    return result
+
+
+def _market_sentiment(ctx):
+    vix_d  = ctx.get("^VIX")
+    nq_d   = ctx.get("NQ=F")
+    ym_d   = ctx.get("YM=F")
+    vix    = vix_d["price"] if vix_d else None
+    fut_avg = ((nq_d["chg_pct"] if nq_d else 0) + (ym_d["chg_pct"] if ym_d else 0)) / 2
+
+    if vix is None:
+        return "DESCONOCIDO", "⚪", "#6b7280", "Sin datos de VIX disponibles"
+    if vix > 35:
+        return "PÁNICO", "🔴", "#f87171", f"VIX {vix:.1f} — miedo extremo en el mercado"
+    if vix > 25:
+        return "TEMEROSO", "🔴", "#fca5a5", f"VIX {vix:.1f} — alta volatilidad, precaución"
+    if vix > 20:
+        label = "NEGATIVO" if fut_avg < -0.3 else "PRECAUCIÓN"
+        clr   = "#f87171" if fut_avg < -0.3 else "#fbbf24"
+        return label, "🟡", clr, f"VIX {vix:.1f} — incertidumbre, futuros {fut_avg:+.1f}%"
+    if vix < 15:
+        if fut_avg > 0.2:
+            return "POSITIVO", "🟢", "#4ade80", f"VIX {vix:.1f} bajo · futuros alcistas {fut_avg:+.1f}%"
+        return "NEUTRAL", "🟡", "#fbbf24", f"VIX {vix:.1f} bajo pero futuros sin dirección clara"
+    # VIX 15-20
+    if fut_avg > 0.3:
+        return "MOD. POSITIVO", "🟢", "#86efac", f"VIX {vix:.1f} controlado · futuros {fut_avg:+.1f}%"
+    if fut_avg < -0.3:
+        return "MOD. NEGATIVO", "🟡", "#fbbf24", f"VIX {vix:.1f} · futuros a la baja {fut_avg:+.1f}%"
+    return "NEUTRAL", "🟡", "#fbbf24", f"VIX {vix:.1f} — sin señal clara de dirección"
+
+
+def render_market_panel():
+    ctx = get_market_context()
+    sentiment, sem_icon, sem_clr, sem_desc = _market_sentiment(ctx)
+
+    def _asset_html(sym):
+        d = ctx.get(sym)
+        meta = MARKET_TICKERS[sym]
+        if d is None:
+            return (
+                f'<div style="display:flex;flex-direction:column;gap:3px;min-width:130px">'
+                f'<span style="color:#1e2c50;font-size:0.6rem;font-weight:900;letter-spacing:.1em;'
+                f'text-transform:uppercase">{meta["icon"]} {meta["name"]}</span>'
+                f'<span style="color:#374151;font-size:0.82rem">N/D</span></div>'
+            )
+        chg    = d["chg_pct"]
+        clr    = "#4ade80" if chg > 0 else "#f87171" if chg < 0 else "#6b7280"
+        arrow  = "▲" if chg > 0 else "▼" if chg < 0 else "▸"
+        is_brent = sym == "BZ=F"
+        fast   = is_brent and abs(chg) >= BRENT_ALERT_PCT
+        fast_tag = (
+            f'<span style="background:rgba(251,191,36,0.15);border:1px solid #92400e;'
+            f'border-radius:4px;padding:1px 6px;font-size:0.6rem;font-weight:900;'
+            f'color:#fbbf24;margin-left:6px;letter-spacing:.06em">⚡ RÁPIDO</span>'
+            if fast else ""
+        )
+        price_fmt = f"${d['price']:.2f}" if is_brent else f"{d['price']:,.1f}" if d['price'] > 1000 else f"{d['price']:.2f}"
+        hl_html = ""
+        if d.get("day_high") and d.get("day_low"):
+            hl_html = (
+                f'<span style="color:#1e2c50;font-size:0.7rem;margin-left:8px">'
+                f'H:{d["day_high"]:.2f} L:{d["day_low"]:.2f}</span>'
+                if is_brent else
+                f'<span style="color:#1e2c50;font-size:0.7rem;margin-left:8px">'
+                f'H:{d["day_high"]:,.0f} L:{d["day_low"]:,.0f}</span>'
+            )
+        return (
+            f'<div style="display:flex;flex-direction:column;gap:4px;min-width:140px">'
+            f'<span style="color:#2d3a5a;font-size:0.6rem;font-weight:900;letter-spacing:.1em;'
+            f'text-transform:uppercase">{meta["icon"]} {meta["name"]}{fast_tag}</span>'
+            f'<div style="display:flex;align-items:baseline;gap:6px;flex-wrap:wrap">'
+            f'<span style="color:#eef2ff;font-size:1.05rem;font-weight:700">{price_fmt}</span>'
+            f'<span style="color:{clr};font-size:0.88rem;font-weight:700">{arrow} {chg:+.2f}%</span>'
+            f'{hl_html}</div></div>'
+        )
+
+    assets_html = "".join(_asset_html(s) for s in MARKET_TICKERS)
+    st.markdown(
+        f'<div style="background:rgba(255,255,255,0.018);border:1px solid #0f1428;'
+        f'border-radius:14px;padding:14px 20px;margin-bottom:16px">'
+        f'<div style="display:flex;align-items:center;justify-content:space-between;'
+        f'flex-wrap:wrap;gap:16px">'
+        f'<div style="display:flex;flex-wrap:wrap;gap:28px">{assets_html}</div>'
+        f'<div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px;'
+        f'padding-left:20px;border-left:1px solid #0f1428">'
+        f'<div style="display:flex;align-items:center;gap:8px">'
+        f'<span style="font-size:1.3rem">{sem_icon}</span>'
+        f'<span style="color:{sem_clr};font-size:1.0rem;font-weight:900;letter-spacing:-0.01em">'
+        f'{sentiment}</span></div>'
+        f'<span style="color:#374151;font-size:0.75rem;text-align:right;max-width:220px">'
+        f'{sem_desc}</span>'
+        f'<span style="color:#1e2c50;font-size:0.6rem;letter-spacing:.08em">SENTIMIENTO DE MERCADO</span>'
+        f'</div></div></div>',
+        unsafe_allow_html=True,
+    )
+
 
 # ─────────────────────────────────────────────
 # ESTADO DE SESIÓN
@@ -396,19 +522,33 @@ hc3.caption(f"Fuente precio: {price_src}  ·  Cargado: {datetime.now().strftime(
 st.divider()
 
 # ─────────────────────────────────────────────
+# PANEL DE MERCADO (siempre visible)
+# ─────────────────────────────────────────────
+render_market_panel()
+
+# ─────────────────────────────────────────────
+# POSICIÓN — cálculo previo (sin renderizar)
+# ─────────────────────────────────────────────
+if entries:
+    _ts = sum(e["shares"] for e in entries)
+    _tc = sum(e["shares"] * e["price"] for e in entries)
+    _ap = _tc / _ts
+    _cv = _ts * price
+    position = {"shares": _ts, "avg_price": _ap, "total_cost": _tc,
+                "pnl_eur": _cv - _tc, "pnl_pct": (_cv / _tc - 1) * 100}
+else:
+    position = {"shares": 0, "avg_price": 0, "total_cost": 0, "pnl_eur": 0, "pnl_pct": 0}
+
+# ─────────────────────────────────────────────
 # TABS
 # ─────────────────────────────────────────────
-tab_analysis, tab_backtest = st.tabs(["📊 Análisis", "📈 Backtesting"])
+tab_analysis, tab_position, tab_backtest = st.tabs(["📊 Análisis", "💼 Mi Posición", "📈 Backtesting"])
 
 
 # ═══════════════════════════════════════════════
 # TAB 1 — ANÁLISIS
 # ═══════════════════════════════════════════════
 with tab_analysis:
-
-    st.subheader(f"💼 Mi posición en {nombre}")
-    position = render_position(entries, price)
-    st.divider()
 
     bc1, bc2 = st.columns([1, 3])
     with bc1:
@@ -536,12 +676,7 @@ with tab_analysis:
         else:
             exec_line = f"No tocar la posición hasta cierre sobre {_r} con volumen o pérdida de {_s}."
 
-        # 1. Alerta objetivo / stop (requiere posición abierta + ATR del diario)
-        atr_day = day_r.get("atr") if day_r else None
-        if entries and atr_day:
-            render_target_alert(position, cur_price, atr_day)
-
-        # 2. Resultado principal
+        # 1. Resultado principal
         st.markdown('<div class="sec-header">RESULTADO DEL ANÁLISIS</div>', unsafe_allow_html=True)
         render_verdict(verdict, a["score"], a["context"], exec_line)
         render_scenarios(day_r, intra_tfs, cur_price)
@@ -689,7 +824,31 @@ with tab_analysis:
 
 
 # ═══════════════════════════════════════════════
-# TAB 2 — BACKTESTING
+# TAB 2 — MI POSICIÓN
+# ═══════════════════════════════════════════════
+with tab_position:
+    st.subheader(f"💼 Mi posición en {nombre}")
+    render_position(entries, price)
+
+    # Alerta stop/objetivo si hay análisis previo con ATR
+    a_pos = st.session_state.analysis
+    if a_pos and entries:
+        day_r_pos = a_pos["tf_results"][0] if a_pos.get("tf_results") else None
+        atr_pos   = day_r_pos.get("atr") if day_r_pos else None
+        cur_p_pos = day_r_pos["price"] if day_r_pos else price
+        if atr_pos:
+            st.divider()
+            render_target_alert(position, cur_p_pos, atr_pos)
+    elif entries and not a_pos:
+        st.info(
+            "Pulsa **ANALIZAR AHORA** en la pestaña 📊 Análisis para calcular "
+            "el stop y el objetivo basados en el ATR.",
+            icon="ℹ️",
+        )
+
+
+# ═══════════════════════════════════════════════
+# TAB 3 — BACKTESTING
 # ═══════════════════════════════════════════════
 with tab_backtest:
     st.markdown(
