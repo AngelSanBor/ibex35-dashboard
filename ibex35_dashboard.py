@@ -318,23 +318,14 @@ def render_market_panel():
             if fast else ""
         )
         price_fmt = f"${d['price']:.2f}" if is_brent else f"{d['price']:,.1f}" if d['price'] > 1000 else f"{d['price']:.2f}"
-        hl_html = ""
-        if d.get("day_high") and d.get("day_low"):
-            hl_html = (
-                f'<span style="color:#1e2c50;font-size:0.7rem;margin-left:8px">'
-                f'H:{d["day_high"]:.2f} L:{d["day_low"]:.2f}</span>'
-                if is_brent else
-                f'<span style="color:#1e2c50;font-size:0.7rem;margin-left:8px">'
-                f'H:{d["day_high"]:,.0f} L:{d["day_low"]:,.0f}</span>'
-            )
         return (
-            f'<div style="display:flex;flex-direction:column;gap:4px;min-width:140px">'
-            f'<span style="color:#2d3a5a;font-size:0.72rem;font-weight:900;letter-spacing:.1em;'
+            f'<div style="display:flex;flex-direction:column;gap:6px;min-width:150px">'
+            f'<span style="color:#2d3a5a;font-size:1.1rem;font-weight:900;letter-spacing:.06em;'
             f'text-transform:uppercase">{meta["icon"]} {meta["name"]}{fast_tag}</span>'
-            f'<div style="display:flex;align-items:baseline;gap:6px;flex-wrap:wrap">'
-            f'<span style="color:#eef2ff;font-size:1.35rem;font-weight:800;letter-spacing:-0.01em">{price_fmt}</span>'
-            f'<span style="color:{clr};font-size:1.05rem;font-weight:800">{arrow} {chg:+.2f}%</span>'
-            f'{hl_html}</div></div>'
+            f'<div style="display:flex;align-items:baseline;gap:8px;flex-wrap:wrap">'
+            f'<span style="color:#eef2ff;font-size:1.9rem;font-weight:800;letter-spacing:-0.02em;line-height:1">{price_fmt}</span>'
+            f'<span style="color:{clr};font-size:1.4rem;font-weight:800">{arrow} {chg:+.2f}%</span>'
+            f'</div></div>'
         )
 
     assets_html = "".join(_asset_html(s) for s in MARKET_TICKERS)
