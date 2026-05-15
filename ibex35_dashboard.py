@@ -126,7 +126,7 @@ st.markdown("""
 
     /* ═══ MÓVIL / iPHONE ═══════════════════════════════════════════════ */
     @media screen and (max-width: 768px) {
-        .block-container { padding: 0.5rem 0.6rem !important; max-width: 100% !important; }
+        .block-container { padding: 4.5rem 0.6rem 1rem !important; max-width: 100% !important; }
 
         /* Fuentes globales más grandes */
         p, li { font-size: 0.98rem !important; line-height: 1.65 !important; }
@@ -329,11 +329,11 @@ def render_market_panel():
             )
         return (
             f'<div style="display:flex;flex-direction:column;gap:4px;min-width:140px">'
-            f'<span style="color:#2d3a5a;font-size:0.6rem;font-weight:900;letter-spacing:.1em;'
+            f'<span style="color:#2d3a5a;font-size:0.72rem;font-weight:900;letter-spacing:.1em;'
             f'text-transform:uppercase">{meta["icon"]} {meta["name"]}{fast_tag}</span>'
             f'<div style="display:flex;align-items:baseline;gap:6px;flex-wrap:wrap">'
-            f'<span style="color:#eef2ff;font-size:1.05rem;font-weight:700">{price_fmt}</span>'
-            f'<span style="color:{clr};font-size:0.88rem;font-weight:700">{arrow} {chg:+.2f}%</span>'
+            f'<span style="color:#eef2ff;font-size:1.35rem;font-weight:800;letter-spacing:-0.01em">{price_fmt}</span>'
+            f'<span style="color:{clr};font-size:1.05rem;font-weight:800">{arrow} {chg:+.2f}%</span>'
             f'{hl_html}</div></div>'
         )
 
