@@ -1,295 +1,738 @@
-import streamlit as st
-import pandas as pd
-import requests
-import io
-import plotly.graph_objects as go
-from plotly.subplots import make_subplots
-from ta.trend import SMAIndicator, EMAIndicator, MACD
-from ta.momentum import RSIIndicator
-from datetime import datetime, timedelta
+"""
+IBEX 35 · Análisis IA Swing Trading
+Multi-timeframe + Backtesting + Noticias + Visión por IA
+"""
 
-st.set_page_config(page_title="IBEX 35 · Trading Desk", page_icon="📈", layout="wide")
+import json
+import os
+from datetime import datetime
+
+import streamlit as st
+
+from analysis import (
+    analyze_tf, combined_verdict,
+    get_catalyst_data, get_ibex_relative, get_price,
+    analyze_screenshot,
+)
+from backtester import run_backtest
+from news import get_news
+from ui_components import (
+    render_backtest_results, render_catalyst, render_news,
+    render_position, render_scenarios, render_signal_table,
+    render_target_alert, render_tf_block, render_verdict,
+)
+
+# ─────────────────────────────────────────────
+# CONFIG
+# ─────────────────────────────────────────────
+st.set_page_config(
+    page_title="IBEX35 · Análisis IA",
+    page_icon="🔍",
+    layout="wide",
+    initial_sidebar_state="auto",
+)
 
 st.markdown("""
 <style>
-@import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@300;400;500&family=Syne:wght@400;600;700;800&display=swap');
-html, body, [class*="css"] { font-family: 'Syne', sans-serif; }
-.block-container { padding: 1.5rem 2rem; }
-.dash-header { display: flex; align-items: baseline; gap: 16px; margin-bottom: 2rem; }
-.dash-title { font-family: 'Syne', sans-serif; font-size: 2rem; font-weight: 800; color: #f0f0f0; letter-spacing: -1px; margin: 0; }
-.dash-sub { font-family: 'DM Mono', monospace; font-size: 0.75rem; color: #555; letter-spacing: 2px; text-transform: uppercase; }
-.metric-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 1px; background: #1a1a24; border: 1px solid #1a1a24; border-radius: 12px; overflow: hidden; margin-bottom: 1.5rem; }
-.metric-card { background: #0f0f18; padding: 1.2rem 1.4rem; }
-.metric-label { font-family: 'DM Mono', monospace; font-size: 0.65rem; color: #444; text-transform: uppercase; letter-spacing: 2px; margin-bottom: 6px; }
-.metric-value { font-family: 'DM Mono', monospace; font-size: 1.5rem; font-weight: 500; color: #e8e8e8; }
-.metric-value.positive { color: #00e5a0; }
-.metric-value.negative { color: #ff4d6d; }
-.pos-banner { background: linear-gradient(135deg, #0f1f17 0%, #0a0f1a 100%); border: 1px solid #1a3a28; border-left: 3px solid #00e5a0; border-radius: 8px; padding: 1rem 1.4rem; margin-bottom: 1.5rem; display: flex; gap: 2rem; align-items: center; flex-wrap: wrap; }
-.pos-banner.neg { border-left-color: #ff4d6d; background: linear-gradient(135deg, #1f0f0f 0%, #0a0a1a 100%); border-color: #3a1a1a; }
-.pos-label { font-family: 'DM Mono', monospace; font-size: 0.65rem; color: #3a7a5a; text-transform: uppercase; letter-spacing: 2px; }
-.pos-value { font-family: 'DM Mono', monospace; font-size: 1rem; color: #00e5a0; font-weight: 500; }
-.pos-value.neg { color: #ff4d6d; }
-.monitor-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 1px; background: #1a1a24; border: 1px solid #1a1a24; border-radius: 12px; overflow: hidden; margin-top: 1rem; }
-.monitor-cell { background: #0f0f18; padding: 1rem; }
-.monitor-ticker { font-family: 'DM Mono', monospace; font-size: 0.65rem; color: #444; text-transform: uppercase; letter-spacing: 2px; margin-bottom: 4px; }
-.monitor-price { font-family: 'DM Mono', monospace; font-size: 1.1rem; color: #e8e8e8; font-weight: 500; }
-.monitor-chg.up { color: #00e5a0; font-size: 0.8rem; }
-.monitor-chg.dn { color: #ff4d6d; font-size: 0.8rem; }
-section[data-testid="stSidebar"] { background: #0f0f18 !important; border-right: 1px solid #1a1a24; }
-section[data-testid="stSidebar"] * { color: #aaa !important; }
-.stNumberInput input { background: #1a1a24 !important; border: 1px solid #2a2a38 !important; color: #e8e8e8 !important; border-radius: 6px !important; font-family: 'DM Mono', monospace !important; }
-.stButton button { background: #00e5a0 !important; color: #0a0a0f !important; font-family: 'Syne', sans-serif !important; font-weight: 700 !important; border: none !important; border-radius: 6px !important; }
-hr { border-color: #1a1a24 !important; }
-#MainMenu, footer, header { visibility: hidden; }
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap');
+
+    html, body, [class*="css"], [data-testid="stAppViewContainer"],
+    [data-testid="stHeader"], .main {
+        background: #03050d !important;
+        font-family: 'Inter', sans-serif;
+    }
+    [data-testid="stSidebar"] {
+        background: #060914 !important;
+        border-right: 1px solid #0f1426;
+    }
+    .block-container { padding-top: 1.4rem !important; max-width: 1260px; }
+
+    h1,h2,h3 { color: #eef2ff !important; font-family: 'Inter', sans-serif; font-weight: 800; letter-spacing:-0.02em; }
+    p, li, span { font-family: 'Inter', sans-serif; }
+
+    .vcard {
+        border-radius: 20px; padding: 36px 42px;
+        display: flex; align-items: center; justify-content: space-between;
+        flex-wrap: wrap; gap: 28px; position: relative;
+    }
+    .vcard-buy {
+        background: linear-gradient(145deg, #020d05 0%, #030f07 60%, #041209 100%);
+        border: 1px solid #14532d;
+        box-shadow: 0 0 80px rgba(20,83,45,0.18), 0 0 0 1px rgba(74,222,128,0.06) inset, 0 40px 80px rgba(0,0,0,0.6);
+    }
+    .vcard-sell {
+        background: linear-gradient(145deg, #0c0202 0%, #100303 60%, #130404 100%);
+        border: 1px solid #7f1d1d;
+        box-shadow: 0 0 80px rgba(127,29,29,0.2), 0 0 0 1px rgba(248,113,113,0.05) inset, 0 40px 80px rgba(0,0,0,0.6);
+    }
+    .vcard-hold {
+        background: linear-gradient(145deg, #080601 0%, #0d0a02 60%, #110d02 100%);
+        border: 1px solid #78350f;
+        box-shadow: 0 0 60px rgba(120,53,15,0.15), 0 0 0 1px rgba(251,191,36,0.04) inset, 0 40px 80px rgba(0,0,0,0.6);
+    }
+
+    .tf-card {
+        border-radius: 16px; padding: 22px 24px; margin-bottom: 0;
+        border: 1px solid #0d1022; position: relative; overflow: hidden;
+    }
+    .tf-buy  { background: linear-gradient(160deg, #020b05 0%, #040e07 100%); border-color: #0f3a1f; box-shadow: 0 8px 32px rgba(15,58,31,0.25); }
+    .tf-sell { background: linear-gradient(160deg, #0b0202 0%, #0f0303 100%); border-color: #3a0f0f; box-shadow: 0 8px 32px rgba(58,15,15,0.25); }
+    .tf-hold { background: linear-gradient(160deg, #090702 0%, #0d0b03 100%); border-color: #3a2808; box-shadow: 0 8px 32px rgba(58,40,8,0.2); }
+
+    .pill {
+        display: inline-flex; align-items: center; padding: 5px 14px;
+        border-radius: 5px; font-size: 0.7rem; font-weight: 900;
+        letter-spacing: .12em; text-transform: uppercase;
+    }
+    .pill-buy  { background: rgba(20,83,45,0.5);  color: #4ade80; border: 1px solid #15803d; }
+    .pill-sell { background: rgba(127,29,29,0.5); color: #fca5a5; border: 1px solid #991b1b; }
+    .pill-hold { background: rgba(120,53,15,0.5); color: #fcd34d; border: 1px solid #a16207; }
+
+    .chip {
+        display: inline-flex; flex-direction: column; align-items: flex-start;
+        background: rgba(255,255,255,0.025); border: 1px solid #0f1428;
+        border-radius: 10px; padding: 10px 15px; min-width: 96px; backdrop-filter: blur(8px);
+    }
+    .chip-label { color: #2d3a5a; font-size: 0.65rem; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; margin-bottom: 5px; }
+    .chip-value { color: #dde5ff; font-size: 1.05rem; font-weight: 700; }
+
+    .sig-bull { background: rgba(10,40,20,0.5); border-left: 2px solid #16a34a; border-radius: 0 8px 8px 0; padding: 7px 14px; margin: 3px 0; color: #86efac; font-size: 0.88rem; }
+    .sig-bear { background: rgba(50,8,8,0.5);   border-left: 2px solid #dc2626; border-radius: 0 8px 8px 0; padding: 7px 14px; margin: 3px 0; color: #fca5a5; font-size: 0.88rem; }
+    .sig-neut { background: rgba(10,14,28,0.6); border-left: 2px solid #1a2240; border-radius: 0 8px 8px 0; padding: 7px 14px; margin: 3px 0; color: #374151; font-size: 0.88rem; }
+
+    .pos-row { background: rgba(255,255,255,0.02); border: 1px solid #0f1428; border-radius: 14px; padding: 18px 22px; margin: 6px 0; }
+
+    .news-item { background: rgba(255,255,255,0.02); border: 1px solid #0f1428; border-radius: 12px; padding: 15px 20px; margin: 6px 0; transition: border-color 0.15s ease; }
+    .news-item:hover { border-color: #1e2c55; background: rgba(255,255,255,0.035); }
+
+    .sec-header {
+        color: #1e2c50; font-size: 0.65rem; font-weight: 900; letter-spacing: .18em;
+        text-transform: uppercase; margin: 36px 0 14px; padding-bottom: 10px;
+        border-bottom: 1px solid #0d1428; display: flex; align-items: center; gap: 10px;
+    }
+
+    hr { border-color: #0d1428 !important; }
+
+    [data-testid="stMetricValue"]  { color: #eef2ff !important; font-size: 1.35rem !important; font-weight: 800 !important; letter-spacing: -0.01em; }
+    [data-testid="stMetricLabel"]  { color: #2d3a5a !important; font-size: 0.65rem !important; letter-spacing: .1em; text-transform: uppercase; font-weight: 700 !important; }
+    [data-testid="stMetricDelta"]  { font-size: 0.8rem !important; }
+    [data-testid="metric-container"] { background: rgba(255,255,255,0.02); border: 1px solid #0f1428; border-radius: 14px; padding: 16px 20px !important; }
+
+    .banner-inactive  { background: rgba(10,14,28,0.95); border: 1px solid #1a2240; border-radius: 12px; padding: 16px 22px; }
+    .banner-div-tech  { background: rgba(60,15,110,0.15); border: 1px solid #5b21b6; border-radius: 12px; padding: 14px 20px; }
+    .level-op  { background: rgba(90,35,5,0.2);  border: 1px solid #7c2d12; border-radius: 14px; padding: 18px 20px; }
+    .level-str { background: rgba(255,255,255,0.02); border: 1px solid #0f1428; border-radius: 14px; padding: 18px 20px; }
+
+    /* ═══ MÓVIL / iPHONE ═══════════════════════════════════════════════ */
+    @media screen and (max-width: 768px) {
+        .block-container { padding: 0.5rem 0.6rem !important; max-width: 100% !important; }
+
+        /* Fuentes globales más grandes */
+        p, li { font-size: 0.98rem !important; line-height: 1.65 !important; }
+        h1 { font-size: 1.55rem !important; }
+        h2 { font-size: 1.25rem !important; }
+        h3 { font-size: 1.1rem !important; }
+        .sec-header { font-size: 0.74rem !important; letter-spacing: .1em !important; margin: 22px 0 10px !important; }
+
+        /* Métricas: números más grandes */
+        [data-testid="stMetricValue"]  { font-size: 1.55rem !important; }
+        [data-testid="stMetricLabel"]  { font-size: 0.74rem !important; }
+        [data-testid="stMetricDelta"]  { font-size: 0.88rem !important; }
+        [data-testid="metric-container"] { padding: 12px 14px !important; }
+
+        /* Tarjeta veredicto: apilada verticalmente */
+        .vcard { flex-direction: column !important; padding: 18px 14px !important; gap: 14px !important; align-items: flex-start !important; }
+        .vcard > div:first-child  { min-width: unset !important; width: 100% !important; }
+        .vcard > div:last-child   { min-width: unset !important; width: 100% !important; flex-direction: row !important; flex-wrap: wrap !important; align-items: flex-start !important; gap: 10px !important; }
+
+        /* Texto COMPRAR/VENDER: más grande aún */
+        .vcard div[style*="3.4rem"] { font-size: 2.8rem !important; }
+
+        /* Chips: 2 por fila */
+        .chip { min-width: calc(50% - 8px) !important; flex: 1 1 calc(50% - 8px) !important; padding: 10px 10px !important; }
+        .chip-label { font-size: 0.70rem !important; }
+        .chip-value { font-size: 1.0rem !important; }
+
+        /* Pills */
+        .pill { font-size: 0.80rem !important; padding: 6px 14px !important; }
+
+        /* TF cards */
+        .tf-card { padding: 14px 12px !important; }
+
+        /* Señales técnicas */
+        .sig-bull, .sig-bear, .sig-neut { font-size: 0.92rem !important; padding: 8px 12px !important; }
+
+        /* Tablas: scroll horizontal en pantalla pequeña */
+        table { display: block !important; overflow-x: auto !important; -webkit-overflow-scrolling: touch !important; font-size: 0.86rem !important; white-space: nowrap !important; }
+
+        /* Noticias */
+        .news-item { padding: 12px 12px !important; }
+        .news-item a { font-size: 1.0rem !important; line-height: 1.5 !important; }
+
+        /* Filas de posición */
+        .pos-row { padding: 12px 12px !important; }
+
+        /* Botones táctiles más grandes */
+        [data-testid="stButton"] button { font-size: 1rem !important; min-height: 48px !important; }
+
+        /* Niveles clave */
+        .level-op, .level-str { padding: 14px 14px !important; }
+
+        /* Sidebar más ancha en móvil para mejor usabilidad */
+        [data-testid="stSidebar"] { min-width: 280px !important; }
+        [data-testid="stSidebar"] label { font-size: 0.95rem !important; }
+        [data-testid="stSidebar"] input { font-size: 0.95rem !important; min-height: 44px !important; }
+        [data-testid="stSidebar"] select { font-size: 0.95rem !important; min-height: 44px !important; }
+    }
 </style>
 """, unsafe_allow_html=True)
 
-IBEX_TICKERS = {
-    "Indra":      "IDR.MC", "Santander": "SAN.MC", "BBVA":       "BBVA.MC",
-    "Inditex":    "ITX.MC", "Iberdrola": "IBE.MC", "Repsol":     "REP.MC",
-    "Telefónica": "TEF.MC", "CaixaBank": "CABK.MC","Amadeus":    "AMS.MC",
-    "ACS":        "ACS.MC", "Acciona":   "ANA.MC", "Naturgy":    "NTGY.MC",
-    "Endesa":     "ELE.MC", "Mapfre":    "MAP.MC", "Sabadell":   "SAB.MC",
+
+# ─────────────────────────────────────────────
+# CONSTANTES
+# ─────────────────────────────────────────────
+IBEX35_NAMES = {
+    "IDR.MC": "Indra Sistemas",    "SAN.MC": "Santander",
+    "BBVA.MC": "BBVA",             "TEF.MC": "Telefónica",
+    "IBE.MC": "Iberdrola",         "REP.MC": "Repsol",
+    "AMS.MC": "Amadeus",           "ACS.MC": "ACS",
+    "FER.MC": "Ferrovial",         "ITX.MC": "Inditex",
+    "AENA.MC": "AENA",             "ENG.MC": "Enagás",
+    "REE.MC": "Red Eléctrica",     "MAP.MC": "Mapfre",
+    "GRF.MC": "Grifols",           "SAB.MC": "Sabadell",
+    "CABK.MC": "CaixaBank",        "BKT.MC": "Bankinter",
+    "CLNX.MC": "Cellnex",          "MTS.MC": "ArcelorMittal",
+    "PHM.MC": "Pharma Mar",        "ACX.MC": "Acerinox",
+    "ANA.MC": "Acciona",           "NTGY.MC": "Naturgy",
+    "COL.MC": "Inmobiliaria Colonial", "MRL.MC": "Merlin Properties",
+    "LOGN.MC": "Logista",          "PUIG.MC": "Puig",
+    "SOL.MC": "Solaria",           "VIS.MC": "Viscofan",
+    "IAG.MC": "IAG",               "ELE.MC": "Endesa",
+    "ROVI.MC": "Lab. Rovi",        "UNI.MC": "Unicaja",
+    "CIE.MC": "CIE Automotive",
 }
 
-NIVELES = {
-    "IDR.MC": {"soportes": [47.00, 47.28], "resistencias": [52.64, 53.00, 54.32], "ma200": 54.82},
+# Fechas de resultados trimestrales — actualizar manualmente
+EARNINGS_DATES = {
+    "IDR.MC": [
+        {"quarter": "Q3 2024", "date": "2024-10-31"},
+        {"quarter": "Q4 2024", "date": "2025-02-26"},
+        {"quarter": "Q1 2025", "date": "2025-04-30"},
+        {"quarter": "Q2 2025", "date": "2025-07-30"},
+        {"quarter": "Q3 2025", "date": "2025-10-30"},
+        {"quarter": "Q4 2025", "date": "2026-02-27"},
+        {"quarter": "Q1 2026", "date": "2026-04-29"},
+    ]
 }
 
-PERIODO_DIAS = {
-    "1sem": 7, "1mes": 32, "3mes": 95, "6mes": 185, "1año": 366, "2años": 730
-}
+TIMEFRAMES = [
+    {"label": "Tendencia  (Diario · 6 meses)",  "period": "6mo", "interval": "1d",  "weight": 3},
+    {"label": "Swing      (1 hora · 1 mes)",     "period": "1mo", "interval": "1h",  "weight": 2},
+    {"label": "Entrada    (15 min · 5 días)",    "period": "5d",  "interval": "15m", "weight": 1},
+]
 
-@st.cache_data(ttl=300)
-def cargar_stooq(ticker, dias):
-    end = datetime.today()
-    start = end - timedelta(days=dias)
-    s = start.strftime("%Y%m%d")
-    e = end.strftime("%Y%m%d")
-    t = ticker.lower().replace(".mc", ".mc")
-    url = f"https://stooq.com/q/d/l/?s={t}&d1={s}&d2={e}&i=d"
-    try:
-        r = requests.get(url, timeout=10, headers={"User-Agent": "Mozilla/5.0"})
-        df = pd.read_csv(io.StringIO(r.text), parse_dates=["Date"], index_col="Date")
-        df = df.sort_index()
-        df.dropna(inplace=True)
-        if df.empty or len(df) < 2:
-            return None
-        return df
-    except Exception:
-        return None
 
+# ─────────────────────────────────────────────
+# ESTADO DE SESIÓN
+# ─────────────────────────────────────────────
+if "analysis" not in st.session_state:
+    st.session_state.analysis = None
+
+
+# ─────────────────────────────────────────────
+# SIDEBAR
+# ─────────────────────────────────────────────
 with st.sidebar:
-    st.markdown("### 📊 CONFIGURACIÓN")
-    ticker_nombre = st.selectbox("Acción", list(IBEX_TICKERS.keys()))
-    ticker = IBEX_TICKERS[ticker_nombre]
-    periodo = st.selectbox("Periodo", list(PERIODO_DIAS.keys()), index=2)
-    tipo_grafico = st.radio("Gráfico", ["Velas", "Línea"])
-    st.markdown("---")
-    st.markdown("### 📐 INDICADORES")
-    mostrar_sma20   = st.checkbox("SMA 20",           value=True)
-    mostrar_ema20   = st.checkbox("EMA 20",           value=True)
-    mostrar_rsi     = st.checkbox("RSI 14",           value=True)
-    mostrar_macd    = st.checkbox("MACD",             value=False)
-    mostrar_niveles = st.checkbox("Niveles técnicos", value=True)
-    st.markdown("---")
-    if st.button("🔄 Actualizar"):
-        st.cache_data.clear()
+    st.title("🔍 IBEX 35 · Análisis IA")
+    st.divider()
 
-st.markdown("""
-<div class="dash-header">
-    <h1 class="dash-title">IBEX 35 · TRADING DESK</h1>
-    <span class="dash-sub">datos en tiempo real · Stooq</span>
-</div>
-""", unsafe_allow_html=True)
+    # ── Selector de ticker
+    ticker_options = list(IBEX35_NAMES.keys())
+    ticker = st.selectbox(
+        "Valor a analizar",
+        options=ticker_options,
+        index=ticker_options.index("IDR.MC"),
+        format_func=lambda t: f"{t}  ·  {IBEX35_NAMES[t]}",
+        key="ticker_select",
+    )
+    custom = st.text_input(
+        "O introduce un ticker personalizado",
+        placeholder="p.ej. AENA.MC",
+        key="ticker_custom",
+    )
+    if custom.strip():
+        ticker = custom.strip().upper()
+    nombre = IBEX35_NAMES.get(ticker, ticker)
 
-dias = PERIODO_DIAS[periodo]
-df = cargar_stooq(ticker, dias)
+    # Reset análisis al cambiar de ticker
+    if "prev_ticker" not in st.session_state:
+        st.session_state.prev_ticker = ticker
+    if st.session_state.prev_ticker != ticker:
+        st.session_state.analysis    = None
+        st.session_state.prev_ticker = ticker
 
-if df is None or df.empty:
-    st.error(f"No se pudieron cargar datos para {ticker_nombre}. Prueba otro periodo.")
-    st.stop()
+    st.caption(f"`{ticker}` · IBEX 35")
+    st.divider()
 
-precio_actual  = float(df["Close"].iloc[-1])
-precio_inicial = float(df["Close"].iloc[0])
-cambio_pct     = ((precio_actual - precio_inicial) / precio_inicial) * 100
-maximo         = float(df["High"].max())
-minimo         = float(df["Low"].min())
-volumen_medio  = int(df["Volume"].mean()) if "Volume" in df.columns else 0
+    # ── Precio manual
+    manual_price = st.number_input(
+        "Precio actual (manual)", min_value=0.0, value=0.0, step=0.01, format="%.3f",
+        key="manual_price",
+        help="Deja en 0 para usar Yahoo Finance (~15 min retraso). Introduce el precio real si lo tienes.",
+    )
+    if manual_price > 0:
+        st.markdown(
+            f'<div style="color:#fbbf24;font-size:0.75rem;margin-top:-8px;margin-bottom:4px">'
+            f'✎ Precio manual activo: <strong>{manual_price:.3f}€</strong></div>',
+            unsafe_allow_html=True,
+        )
 
-chg_class = "positive" if cambio_pct >= 0 else "negative"
-chg_sign  = "▲" if cambio_pct >= 0 else "▼"
+    st.divider()
+    st.subheader("Mi posición")
+    n_ent = st.number_input("Número de entradas", 1, 5, 3, 1)
+    # Defaults solo para IDR.MC (posición real del usuario)
+    _idr_defaults = [(197.0, 58.30), (187.0, 53.35), (223.18, 46.60)]
+    entries = []
+    for i in range(int(n_ent)):
+        d_sh, d_pr = (_idr_defaults[i] if ticker == "IDR.MC" and i < len(_idr_defaults)
+                      else (0.0, 0.0))
+        ca, cb = st.columns(2)
+        sh = ca.number_input(f"#{i+1} Acc.", 0.0, value=d_sh, step=1.0,  key=f"sh{i}", format="%.2f")
+        pr = cb.number_input(f"#{i+1} €",   0.0, value=d_pr, step=0.01, key=f"pr{i}", format="%.2f")
+        if sh > 0 and pr > 0:
+            entries.append({"shares": sh, "price": pr})
 
-st.markdown(f"""
-<div class="metric-grid">
-    <div class="metric-card"><div class="metric-label">Acción</div><div class="metric-value">{ticker_nombre}</div></div>
-    <div class="metric-card"><div class="metric-label">Precio actual</div><div class="metric-value">{precio_actual:.2f} €</div></div>
-    <div class="metric-card"><div class="metric-label">Variación ({periodo})</div><div class="metric-value {chg_class}">{chg_sign} {abs(cambio_pct):.2f}%</div></div>
-    <div class="metric-card"><div class="metric-label">Máximo</div><div class="metric-value">{maximo:.2f} €</div></div>
-    <div class="metric-card"><div class="metric-label">Mínimo</div><div class="metric-value">{minimo:.2f} €</div></div>
-    <div class="metric-card"><div class="metric-label">Vol. medio</div><div class="metric-value">{volumen_medio:,}</div></div>
-</div>
-""", unsafe_allow_html=True)
+    st.divider()
 
-st.markdown("#### 💼 Mi posición en esta acción")
-col_a, col_b, _ = st.columns([1, 1, 2])
-with col_a:
-    acciones_input = st.number_input("Nº de acciones", min_value=0, value=0, step=1)
-with col_b:
-    entrada_input  = st.number_input("Precio de entrada (€)", min_value=0.0, value=0.0, step=0.01, format="%.2f")
+    # ── Volumen manual
+    _prev = st.session_state.get("analysis")
+    _nd_intervals = [
+        r["interval"] for r in (_prev or {}).get("tf_results", [])
+        if r and r["interval"] in ("1h", "15m")
+        and r.get("vol_ratio") is None and not r.get("vol_manual")
+    ]
+    if _nd_intervals:
+        st.markdown(
+            '<div style="background:rgba(120,53,15,0.3);border:1px solid #92400e;'
+            'border-radius:8px;padding:10px 12px;font-size:0.78rem;color:#fcd34d;'
+            'line-height:1.5;margin-bottom:8px">'
+            '📊 <strong>Volumen N/D.</strong> Introduce los datos de tu plataforma '
+            'y pulsa <strong>ANALIZAR</strong> de nuevo.</div>',
+            unsafe_allow_html=True,
+        )
+    else:
+        st.markdown(
+            '<div style="color:#4b5563;font-size:0.75rem;font-weight:600;'
+            'margin-bottom:4px">📊 Volumen manual</div>',
+            unsafe_allow_html=True,
+        )
 
-if acciones_input > 0 and entrada_input > 0:
-    pl_eur       = (precio_actual - entrada_input) * acciones_input
-    pl_pct       = ((precio_actual - entrada_input) / entrada_input) * 100
-    inversion    = entrada_input * acciones_input
-    valor_actual = precio_actual * acciones_input
-    pos_class    = "pos-value" if pl_eur >= 0 else "pos-value neg"
-    ban_class    = "pos-banner" if pl_eur >= 0 else "pos-banner neg"
-    signo        = "▲" if pl_eur >= 0 else "▼"
-    st.markdown(f"""
-    <div class="{ban_class}">
-        <div><div class="pos-label">Inversión</div><div class="pos-value">{inversion:,.0f} €</div></div>
-        <div><div class="pos-label">Valor actual</div><div class="pos-value">{valor_actual:,.0f} €</div></div>
-        <div><div class="pos-label">P&L €</div><div class="{pos_class}">{signo} {abs(pl_eur):,.0f} €</div></div>
-        <div><div class="pos-label">P&L %</div><div class="{pos_class}">{signo} {abs(pl_pct):.2f}%</div></div>
-        <div><div class="pos-label">Acciones</div><div class="pos-value">{acciones_input:,}</div></div>
-        <div><div class="pos-label">Entrada</div><div class="pos-value">{entrada_input:.2f} €</div></div>
-    </div>
-    """, unsafe_allow_html=True)
+    mv_act = st.number_input("Volumen actual (acciones)", min_value=0.0, value=0.0,
+                             step=1000.0, format="%.0f", key="mv_actual",
+                             help="Número de acciones negociadas hoy.")
+    mv_med = st.number_input("Media vol. (acciones, referencia)", min_value=0.0, value=0.0,
+                             step=1000.0, format="%.0f", key="mv_media",
+                             help="Media de volumen de referencia.")
+    if mv_act > 0 and mv_med > 0:
+        _computed_ratio = mv_act / mv_med
+        _ratio_clr = "#4ade80" if _computed_ratio >= 1.3 else "#fbbf24" if _computed_ratio >= 0.7 else "#f87171"
+        st.markdown(
+            f'<div style="background:#0a0c18;border:1px solid #1e2235;border-radius:6px;'
+            f'padding:8px 12px;font-size:0.82rem;margin-top:4px">'
+            f'Ratio calculado: <strong style="color:{_ratio_clr}">{_computed_ratio:.2f}×</strong>'
+            f'<span style="color:#374151;font-size:0.75rem;margin-left:8px">'
+            f'({mv_act:,.0f} / {mv_med:,.0f})</span></div>',
+            unsafe_allow_html=True,
+        )
+        manual_vol_1h  = _computed_ratio
+        manual_vol_15m = _computed_ratio
+    else:
+        manual_vol_1h  = 0.0
+        manual_vol_15m = 0.0
 
-close = df["Close"]
-if len(close) >= 20:
-    df["SMA20"] = SMAIndicator(close, window=20).sma_indicator()
-    df["EMA20"] = EMAIndicator(close, window=20).ema_indicator()
-if len(close) >= 14:
-    df["RSI14"] = RSIIndicator(close, window=14).rsi()
-if len(close) >= 26:
-    macd_obj     = MACD(close)
-    df["MACD"]   = macd_obj.macd()
-    df["Signal"] = macd_obj.macd_signal()
-    df["Hist"]   = macd_obj.macd_diff()
+    st.divider()
+    st.subheader("Análisis de captura")
+    api_key  = st.text_input(
+        "Anthropic API Key", type="password",
+        value=os.environ.get("ANTHROPIC_API_KEY", ""),
+        help="Necesaria para analizar capturas con IA",
+    )
+    uploaded = st.file_uploader(
+        "Gráfico de Investing.com",
+        type=["png", "jpg", "jpeg"],
+        help="Sube la captura y pulsa 'Analizar ahora'",
+    )
 
-n_filas = 1
-row_heights = [0.65]
-if mostrar_rsi:  n_filas += 1; row_heights.append(0.2)
-if mostrar_macd: n_filas += 1; row_heights.append(0.15)
+    st.divider()
+    st.markdown(
+        '<div style="background:rgba(17,24,39,0.8);border:1px solid #374151;border-radius:8px;'
+        'padding:10px 12px;font-size:0.75rem;color:#6b7280;line-height:1.5">'
+        '⚠️ <strong style="color:#4b5563">Limitación conocida:</strong> el volumen en 1H y 15min '
+        'puede contener artefactos de Yahoo Finance para valores del mercado continuo español. '
+        'Se filtra automáticamente si es &lt; 15% de la media 20d.</div>',
+        unsafe_allow_html=True,
+    )
+    st.caption("Datos: Yahoo Finance · IA: Claude Sonnet")
 
-fig = make_subplots(rows=n_filas, cols=1, shared_xaxes=True,
-                    vertical_spacing=0.03, row_heights=row_heights)
 
-if tipo_grafico == "Velas":
-    fig.add_trace(go.Candlestick(
-        x=df.index, open=df["Open"], high=df["High"], low=df["Low"], close=df["Close"],
-        name=ticker_nombre,
-        increasing_line_color="#00e5a0", increasing_fillcolor="#00e5a0",
-        decreasing_line_color="#ff4d6d", decreasing_fillcolor="#ff4d6d"
-    ), row=1, col=1)
-else:
-    fig.add_trace(go.Scatter(x=df.index, y=df["Close"], mode="lines", name=ticker_nombre,
-        line=dict(color="#00e5a0", width=2), fill="tozeroy", fillcolor="rgba(0,229,160,0.05)"
-    ), row=1, col=1)
+# ─────────────────────────────────────────────
+# CABECERA
+# ─────────────────────────────────────────────
+st.markdown(f"# 🔍 {nombre} &nbsp; `{ticker}`")
 
-if mostrar_sma20 and "SMA20" in df.columns:
-    fig.add_trace(go.Scatter(x=df.index, y=df["SMA20"], mode="lines",
-        name="SMA 20", line=dict(color="#f59e0b", width=1.5, dash="dot")), row=1, col=1)
-if mostrar_ema20 and "EMA20" in df.columns:
-    fig.add_trace(go.Scatter(x=df.index, y=df["EMA20"], mode="lines",
-        name="EMA 20", line=dict(color="#a78bfa", width=1.5, dash="dash")), row=1, col=1)
+_yf_price, prev = get_price(ticker)
+price     = manual_price if manual_price > 0 else _yf_price
+price_src = "✎ manual" if manual_price > 0 else "Yahoo Finance (~15 min retraso)"
+chg       = price - prev
+chg_pct   = (chg / prev) * 100
 
-if acciones_input > 0 and entrada_input > 0:
-    fig.add_hline(y=entrada_input, line_color="#00e5a0", line_width=1.5,
-        annotation_text=f"Mi entrada {entrada_input:.2f}€",
-        annotation_font_color="#00e5a0", annotation_position="right", row=1, col=1)
+hc1, hc2, hc3 = st.columns([1, 1, 2])
+hc1.metric("Precio actual",   f"{price:.3f} €",
+           f"{'+' if chg >= 0 else ''}{chg:.3f} € ({chg_pct:+.2f}%)",
+           delta_color="normal" if chg >= 0 else "inverse")
+hc2.metric("Cierre anterior", f"{prev:.3f} €")
+hc3.caption(f"Fuente precio: {price_src}  ·  Cargado: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}")
 
-if mostrar_niveles and ticker in NIVELES:
-    niv = NIVELES[ticker]
-    for s in niv["soportes"]:
-        fig.add_hline(y=s, line_color="#00e5a0", line_dash="dot", line_width=1,
-            annotation_text=f"Soporte {s:.2f}€", annotation_font_color="#00e5a0",
-            annotation_position="right", row=1, col=1)
-    for r in niv["resistencias"]:
-        fig.add_hline(y=r, line_color="#ff4d6d", line_dash="dot", line_width=1,
-            annotation_text=f"Resistencia {r:.2f}€", annotation_font_color="#ff4d6d",
-            annotation_position="right", row=1, col=1)
-    fig.add_hline(y=niv["ma200"], line_color="#f59e0b", line_dash="longdash", line_width=1.5,
-        annotation_text=f"MA200 {niv['ma200']:.2f}€", annotation_font_color="#f59e0b",
-        annotation_position="right", row=1, col=1)
+st.divider()
 
-fila_actual = 2
-if mostrar_rsi and "RSI14" in df.columns:
-    fig.add_trace(go.Scatter(x=df.index, y=df["RSI14"], mode="lines",
-        name="RSI 14", line=dict(color="#f472b6", width=1.5)), row=fila_actual, col=1)
-    fig.add_hline(y=70, line_color="#ff4d6d", line_dash="dot", line_width=1, row=fila_actual, col=1)
-    fig.add_hline(y=30, line_color="#00e5a0", line_dash="dot", line_width=1, row=fila_actual, col=1)
-    fig.update_yaxes(title_text="RSI", range=[0,100], row=fila_actual, col=1, tickfont_color="#444")
-    fila_actual += 1
+# ─────────────────────────────────────────────
+# TABS
+# ─────────────────────────────────────────────
+tab_analysis, tab_backtest = st.tabs(["📊 Análisis", "📈 Backtesting"])
 
-if mostrar_macd and "MACD" in df.columns:
-    fig.add_trace(go.Scatter(x=df.index, y=df["MACD"], mode="lines",
-        name="MACD", line=dict(color="#60a5fa", width=1.5)), row=fila_actual, col=1)
-    fig.add_trace(go.Scatter(x=df.index, y=df["Signal"], mode="lines",
-        name="Señal", line=dict(color="#f59e0b", width=1.5)), row=fila_actual, col=1)
-    colores = ["#00e5a0" if v >= 0 else "#ff4d6d" for v in df["Hist"].fillna(0)]
-    fig.add_trace(go.Bar(x=df.index, y=df["Hist"], name="Histograma",
-        marker_color=colores, opacity=0.6), row=fila_actual, col=1)
-    fig.update_yaxes(title_text="MACD", row=fila_actual, col=1, tickfont_color="#444")
 
-fig.update_layout(
-    height=620, paper_bgcolor="#0a0a0f", plot_bgcolor="#0f0f18",
-    font=dict(family="DM Mono", color="#555"),
-    xaxis_rangeslider_visible=False,
-    legend=dict(orientation="h", y=1.02, x=0, bgcolor="rgba(0,0,0,0)", font=dict(color="#555", size=11)),
-    margin=dict(l=10, r=140, t=30, b=10),
-    hovermode="x unified",
-    hoverlabel=dict(bgcolor="#1a1a24", font_color="#e8e8e8", bordercolor="#2a2a38")
-)
-fig.update_xaxes(showgrid=True, gridcolor="#1a1a24", zeroline=False, tickfont=dict(color="#444"))
-fig.update_yaxes(showgrid=True, gridcolor="#1a1a24", zeroline=False, tickfont=dict(color="#444"))
-fig.update_yaxes(title_text="Precio (€)", row=1, col=1)
-st.plotly_chart(fig, use_container_width=True)
+# ═══════════════════════════════════════════════
+# TAB 1 — ANÁLISIS
+# ═══════════════════════════════════════════════
+with tab_analysis:
 
-st.markdown("---")
-st.markdown("#### 🌐 Monitor IBEX 35")
+    st.subheader(f"💼 Mi posición en {nombre}")
+    position = render_position(entries, price)
+    st.divider()
 
-@st.cache_data(ttl=300)
-def precios_ibex(tickers_dict):
-    resultados = {}
-    end = datetime.today()
-    start = end - timedelta(days=7)
-    s = start.strftime("%Y%m%d")
-    e = end.strftime("%Y%m%d")
-    for nombre, t in tickers_dict.items():
-        try:
-            url = f"https://stooq.com/q/d/l/?s={t.lower()}&d1={s}&d2={e}&i=d"
-            r = requests.get(url, timeout=8, headers={"User-Agent": "Mozilla/5.0"})
-            d = pd.read_csv(io.StringIO(r.text), parse_dates=["Date"], index_col="Date")
-            d = d.sort_index().dropna()
-            if len(d) >= 2:
-                precio   = float(d["Close"].iloc[-1])
-                anterior = float(d["Close"].iloc[-2])
-                cambio   = ((precio - anterior) / anterior) * 100
-                resultados[nombre] = (precio, cambio)
-        except Exception:
-            pass
-    return resultados
+    bc1, bc2 = st.columns([1, 3])
+    with bc1:
+        run = st.button("🔍  ANALIZAR AHORA", type="primary", use_container_width=True)
+    with bc2:
+        st.caption(
+            "Lanza análisis técnico multi-timeframe (Diario · 1H · 15min) + noticias."
+            + ("  |  📎 Captura cargada — se analizará también." if uploaded else "")
+        )
 
-with st.spinner(""):
-    precios = precios_ibex(IBEX_TICKERS)
+    # ── Ejecutar análisis
+    if run:
+        tf_results     = []
+        chart_analysis = None
+        img_bytes_save = uploaded.getvalue() if uploaded else None
 
-if precios:
-    cells = ""
-    for nombre, (precio, cambio) in precios.items():
-        chg_cls = "up" if cambio >= 0 else "dn"
-        signo   = "▲" if cambio >= 0 else "▼"
-        cells += f"""<div class="monitor-cell">
-            <div class="monitor-ticker">{nombre}</div>
-            <div class="monitor-price">{precio:.2f}€</div>
-            <div class="monitor-chg {chg_cls}">{signo} {abs(cambio):.2f}%</div>
-        </div>"""
-    st.markdown(f'<div class="monitor-grid">{cells}</div>', unsafe_allow_html=True)
+        with st.status(f"🔍 Analizando {nombre}...", expanded=True) as status:
+            _manual_vols = {"1h": manual_vol_1h or None, "15m": manual_vol_15m or None}
+            for tf in TIMEFRAMES:
+                st.write(f"📊 Descargando datos {tf['label']}...")
+                r = analyze_tf(ticker, tf["label"], tf["period"], tf["interval"],
+                               manual_vol_ratio=_manual_vols.get(tf["interval"]))
+                tf_results.append(r)
+                v    = r["verdict"] if r else "Sin datos"
+                icon = {"COMPRAR": "🟢", "VENDER": "🔴", "ESPERAR": "🟡"}.get(v, "⚪")
+                st.write(f"   {icon} {tf['label']} → **{v}**"
+                         + (f"  ·  RSI {r['rsi']:.0f}  ·  Score {r['score']:+.1f}" if r else ""))
 
-st.markdown("---")
-with st.expander("📋 Datos históricos"):
-    cols_show = [c for c in ["Open","High","Low","Close"] if c in df.columns]
-    df_mostrar = df[cols_show].copy()
-    st.dataframe(df_mostrar.round(2).iloc[::-1], use_container_width=True)
+            st.write("⚖️ Calculando veredicto combinado...")
+            verdict, score, context, meta = combined_verdict(tf_results, position)
+            icon_v = {"COMPRAR": "🟢", "VENDER": "🔴", "MANTENER": "🟡"}.get(verdict, "🟡")
+            st.write(f"   {icon_v} Veredicto: **{verdict}**  ·  Score ponderado: **{score:+.2f}**"
+                     + (f"  ·  {meta['vol_valid_count']}/{meta['n_tf']} TF con volumen válido" if meta else ""))
+
+            st.write("📰 Cargando noticias...")
+            news, news_src = get_news(ticker, force_refresh=True)
+            st.write(f"   ✅ {len(news)} noticias · {news_src}")
+
+            if uploaded:
+                st.write("🖼️ Claude analizando el gráfico subido...")
+                mime = "image/jpeg" if uploaded.name.lower().endswith((".jpg", ".jpeg")) else "image/png"
+                pos_ctx = (
+                    "\n".join(f"  · Entrada #{i+1}: {e['shares']:.2f} acc @ {e['price']:.2f}€"
+                              for i, e in enumerate(entries))
+                    + f"\n  · Precio medio: {position['avg_price']:.2f}€"
+                    + f"\n  · P&L actual: {position['pnl_eur']:+,.2f}€ ({position['pnl_pct']:+.1f}%)"
+                    + f"\n  · Precio ahora: {price:.3f}€"
+                )
+                chart_analysis = analyze_screenshot(img_bytes_save, mime, api_key, pos_ctx,
+                                                    nombre, ticker)
+                st.write("   ✅ Análisis de captura completado")
+
+            status.update(label="✅ Análisis completado", state="complete", expanded=False)
+
+        st.session_state.analysis = {
+            "tf_results": tf_results,
+            "verdict":    verdict,
+            "score":      score,
+            "context":    context,
+            "meta":       meta,
+            "news":       news,
+            "news_src":   news_src,
+            "chart":      chart_analysis,
+            "ts":         datetime.now().strftime("%d/%m/%Y %H:%M:%S"),
+            "img_bytes":  img_bytes_save,
+        }
+
+    # ── Mostrar resultados
+    a = st.session_state.analysis
+
+    if a is None:
+        st.markdown(
+            '<div style="background:rgba(255,255,255,0.015);border:1px dashed #0f1a36;border-radius:20px;'
+            'padding:56px 40px;text-align:center;margin-top:28px">'
+            '<div style="color:#0f1a36;font-size:3rem;margin-bottom:16px">◈</div>'
+            '<div style="color:#1e2c50;font-size:0.65rem;font-weight:900;letter-spacing:.2em;'
+            'text-transform:uppercase;margin-bottom:10px">Sin análisis</div>'
+            '<div style="color:#374151;font-size:0.95rem;line-height:1.6">'
+            'Pulsa <strong style="color:#dde5ff">ANALIZAR AHORA</strong> para obtener el análisis '
+            'técnico multi-timeframe y la recomendación de swing trading.'
+            '</div></div>',
+            unsafe_allow_html=True,
+        )
+    else:
+        verdict = a["verdict"]
+        meta    = a.get("meta", {})
+
+        if verdict == "COMPRAR":
+            st.toast(f"Señal de COMPRA detectada en {nombre}", icon="🟢")
+        elif verdict == "VENDER":
+            st.toast(f"Señal de VENTA detectada en {nombre}", icon="🔴")
+        elif verdict == "MANTENER CON ALERTA":
+            st.toast("Divergencia bajista cerca de resistencia — señal degradada", icon="⚠️")
+
+        _nd_now = [
+            r["label"] for r in a.get("tf_results", [])
+            if r and r["interval"] in ("1h", "15m") and r.get("vol_ratio") is None and not r.get("vol_manual")
+        ]
+        if _nd_now:
+            st.info(
+                f"📊 **Volumen N/D** en: {', '.join(_nd_now)}. "
+                "Busca el ratio Vol/Media20d en tu plataforma, introdúcelo en la barra lateral "
+                "(**Volumen manual**) y pulsa **ANALIZAR** de nuevo.",
+                icon="📊",
+            )
+
+        day_r     = a["tf_results"][0]
+        intra_tfs = [r for r in a["tf_results"][1:] if r]
+        cur_price = day_r["price"] if day_r else price
+        op_sups   = [r["support"]    for r in intra_tfs if r.get("support")    and r["support"]    < cur_price]
+        op_ress   = [r["resistance"] for r in intra_tfs if r.get("resistance") and r["resistance"] > cur_price]
+        op_sup_v  = max(op_sups) if op_sups else (day_r["support"]    if day_r else None)
+        op_res_v  = min(op_ress) if op_ress else (day_r["resistance"] if day_r else None)
+        _s = f"{op_sup_v:.2f}€" if op_sup_v else "soporte op."
+        _r = f"{op_res_v:.2f}€" if op_res_v else "resistencia"
+
+        if verdict == "COMPRAR":
+            exec_line = f"Mantener posición. Escenario bajista si cierra bajo {_s} con Vol ≥ 0.7×."
+        elif verdict == "VENDER":
+            exec_line = f"Reducir exposición. Stop operativo en {_s} — no esperar rebote sin volumen."
+        elif verdict == "MANTENER CON ALERTA":
+            exec_line = f"No añadir posición. Esperar cierre sobre {_r} con volumen o vigilar {_s} como stop."
+        elif meta.get("inactive"):
+            exec_line = f"No operar. Mercado inactivo. Vigilar cierre sobre {_r} o bajo {_s}."
+        else:
+            exec_line = f"No tocar la posición hasta cierre sobre {_r} con volumen o pérdida de {_s}."
+
+        # 1. Alerta objetivo / stop (requiere posición abierta + ATR del diario)
+        atr_day = day_r.get("atr") if day_r else None
+        if entries and atr_day:
+            render_target_alert(position, cur_price, atr_day)
+
+        # 2. Resultado principal
+        st.markdown('<div class="sec-header">RESULTADO DEL ANÁLISIS</div>', unsafe_allow_html=True)
+        render_verdict(verdict, a["score"], a["context"], exec_line)
+        render_scenarios(day_r, intra_tfs, cur_price)
+
+        # 2. Rendimiento relativo vs IBEX 35
+        idr_ret, ibex_ret = get_ibex_relative(ticker)
+        if idr_ret is not None:
+            diff         = idr_ret - ibex_ret
+            rel_weak     = (idr_ret < 0 and ibex_ret >= 0) or diff < -3.0
+            all_esperar  = all(r["verdict"] == "ESPERAR" for r in a["tf_results"] if r)
+            tech_weak_rs = (diff > 1.5) and (a["score"] < 0 or all_esperar)
+            if rel_weak:
+                st.markdown(
+                    '<div style="background:rgba(127,29,29,0.3);border:1px solid #991b1b;'
+                    'border-radius:10px;padding:12px 18px;margin-top:12px;'
+                    'color:#fca5a5;font-size:0.92rem;font-weight:600">'
+                    f'⚠️ Debilidad relativa confirmada — {nombre} cae mientras el IBEX 35 sube.</div>',
+                    unsafe_allow_html=True,
+                )
+            if tech_weak_rs:
+                st.markdown(
+                    f'<div class="banner-div-tech" style="margin-top:10px;color:#c4b5fd;font-size:0.9rem">'
+                    f'⚡ <strong>Divergencia fundamental/técnica:</strong> {nombre} supera al IBEX '
+                    f'<strong>+{diff:.1f}%</strong> en 20 días pero los indicadores técnicos no confirman '
+                    f'tendencia alcista.</div>',
+                    unsafe_allow_html=True,
+                )
+            st.markdown(
+                f'<div class="sec-header" style="margin-top:20px">'
+                f'RENDIMIENTO RELATIVO · {ticker} vs IBEX 35 (20 días)</div>',
+                unsafe_allow_html=True,
+            )
+            rc1, rc2, rc3 = st.columns(3)
+            rc1.metric(f"{ticker} (20d)",   f"{idr_ret:+.2f}%", delta_color="normal" if idr_ret >= 0 else "inverse")
+            rc2.metric("IBEX 35 (20d)",     f"{ibex_ret:+.2f}%", delta_color="normal" if ibex_ret >= 0 else "inverse")
+            rc3.metric("Rendimiento relativo", f"{diff:+.2f}%",
+                       "🟢 Fortaleza relativa" if diff >= 0 else "🔴 Debilidad relativa",
+                       delta_color="normal" if diff >= 0 else "inverse")
+
+        # 3. Catalizador reciente
+        st.markdown('<div class="sec-header">CATALIZADOR RECIENTE · ÚLTIMOS 45 DÍAS</div>', unsafe_allow_html=True)
+        earnings_json = json.dumps(EARNINGS_DATES.get(ticker, []))
+        render_catalyst(get_catalyst_data(ticker, earnings_json))
+
+        # 4. Tabla de validación
+        render_signal_table(a["tf_results"], meta)
+
+        # 5. Detalle por temporalidad
+        st.markdown('<div class="sec-header">DETALLE POR TEMPORALIDAD</div>', unsafe_allow_html=True)
+        tc1, tc2, tc3 = st.columns(3)
+        for col, r in zip([tc1, tc2, tc3], a["tf_results"]):
+            with col:
+                render_tf_block(r)
+
+        # 6. Niveles clave
+        if day_r:
+            st.markdown('<div class="sec-header">NIVELES CLAVE · SOPORTE OPERATIVO Y ESTRUCTURAL</div>', unsafe_allow_html=True)
+            cur_price     = day_r["price"]
+            intraday_sups = [r["support"] for r in a["tf_results"][1:]
+                             if r and r.get("support") and r["support"] < cur_price]
+            op_sup   = max(intraday_sups) if intraday_sups else None
+            str_sup  = day_r["support"]
+            dist_op  = (cur_price - op_sup)  / cur_price * 100 if op_sup  else None
+            dist_str = (cur_price - str_sup) / cur_price * 100
+            dist_res = (day_r["resistance"] - cur_price) / cur_price * 100
+
+            nl1, nl2, nl3 = st.columns(3)
+            if op_sup:
+                nl1.markdown(
+                    f'<div class="level-op">'
+                    f'<div style="color:#92400e;font-size:0.7rem;font-weight:700;text-transform:uppercase;margin-bottom:4px">Soporte operativo (intraday)</div>'
+                    f'<div style="color:#fcd34d;font-size:1.4rem;font-weight:700">{op_sup:.3f} €</div>'
+                    f'<div style="color:#78350f;font-size:0.8rem;margin-top:4px">−{dist_op:.1f}% desde precio actual</div>'
+                    f'<div style="color:#92400e;font-size:0.78rem;margin-top:6px">⚠️ Pérdida activa escenario bajista</div>'
+                    f'</div>', unsafe_allow_html=True,
+                )
+            else:
+                nl1.markdown(
+                    '<div class="level-str"><div style="color:#4b5563;font-size:0.7rem;font-weight:700;text-transform:uppercase;margin-bottom:4px">Soporte operativo</div>'
+                    '<div style="color:#6b7280;font-size:0.9rem">Sin datos intraday</div></div>',
+                    unsafe_allow_html=True,
+                )
+            nl2.markdown(
+                f'<div class="level-str">'
+                f'<div style="color:#374151;font-size:0.7rem;font-weight:700;text-transform:uppercase;margin-bottom:4px">Soporte estructural (diario)</div>'
+                f'<div style="color:#7dd3fc;font-size:1.4rem;font-weight:700">{str_sup:.3f} €</div>'
+                f'<div style="color:#374151;font-size:0.8rem;margin-top:4px">−{dist_str:.1f}% desde precio actual</div>'
+                f'<div style="color:#1e3a5f;font-size:0.78rem;margin-top:6px">Invalidaría tesis a medio plazo</div>'
+                f'</div>', unsafe_allow_html=True,
+            )
+            nl3.markdown(
+                f'<div class="level-str">'
+                f'<div style="color:#374151;font-size:0.7rem;font-weight:700;text-transform:uppercase;margin-bottom:4px">Resistencia (diario)</div>'
+                f'<div style="color:#fda4af;font-size:1.4rem;font-weight:700">{day_r["resistance"]:.3f} €</div>'
+                f'<div style="color:#374151;font-size:0.8rem;margin-top:4px">+{dist_res:.1f}% hasta nivel</div>'
+                f'<div style="color:#1e3a5f;font-size:0.78rem;margin-top:6px">Ruptura confirma escenario alcista</div>'
+                f'</div>', unsafe_allow_html=True,
+            )
+
+            st.markdown('<div style="height:14px"></div>', unsafe_allow_html=True)
+            mc1, mc2, mc3, mc4, mc5, mc6 = st.columns(6)
+            if day_r.get("sma20"): mc1.metric("SMA 20",      f"{day_r['sma20']:.3f} €")
+            if day_r.get("sma50"): mc2.metric("SMA 50",      f"{day_r['sma50']:.3f} €")
+            if day_r.get("bb_lo"): mc3.metric("BB Inferior", f"{day_r['bb_lo']:.3f} €")
+            if day_r.get("atr"):   mc4.metric("ATR (14d)",   f"{day_r['atr']:.3f} €")
+            if day_r.get("atr") and day_r["atr"] > 0:
+                atr       = day_r["atr"]
+                stop_px   = cur_price - 1.0 * atr
+                target_px = cur_price + 2.0 * atr
+                rr        = (target_px - cur_price) / (cur_price - stop_px) if cur_price > stop_px else 0
+                rr_str    = f"{rr:.1f}:1" + ("" if rr >= 1.5 else " ⚠️")
+                mc5.metric("Stop (1×ATR)",     f"{stop_px:.3f} €")
+                mc6.metric("Objetivo (2×ATR)", f"{target_px:.3f} €", rr_str,
+                           delta_color="normal" if rr >= 1.5 else "inverse")
+
+        # 7. Noticias
+        st.markdown(
+            f'<div class="sec-header">NOTICIAS RECIENTES · {nombre.upper()}'
+            f'<span style="font-weight:400;color:#374151;margin-left:12px">'
+            f'📡 {a.get("news_src","")}</span></div>',
+            unsafe_allow_html=True,
+        )
+        render_news(a["news"])
+
+        # 8. Análisis de captura
+        if a.get("chart"):
+            st.markdown('<div class="sec-header">ANÁLISIS DEL GRÁFICO · CLAUDE IA</div>', unsafe_allow_html=True)
+            ic1, ic2 = st.columns([1, 1])
+            with ic1:
+                if a.get("img_bytes"):
+                    st.image(a["img_bytes"], caption="Gráfico analizado", use_container_width=True)
+            with ic2:
+                st.markdown(
+                    f'<div style="background:rgba(255,255,255,0.02);border:1px solid #0f1428;'
+                    f'border-radius:16px;padding:22px 24px;font-size:0.92rem;color:#9ca3af;'
+                    f'line-height:1.75">{a["chart"]}</div>',
+                    unsafe_allow_html=True,
+                )
+
+        st.markdown(
+            f'<div style="color:#0f1428;font-size:0.7rem;text-align:right;margin-top:32px;letter-spacing:.04em">'
+            f'⚠️ Análisis orientativo · No es asesoramiento financiero · {a["ts"]}</div>',
+            unsafe_allow_html=True,
+        )
+
+
+# ═══════════════════════════════════════════════
+# TAB 2 — BACKTESTING
+# ═══════════════════════════════════════════════
+with tab_backtest:
+    st.markdown(
+        f'<div style="color:#374151;font-size:0.92rem;line-height:1.7;margin-bottom:20px">'
+        f'Valida si las señales del sistema han tenido edge histórico en <strong style="color:#dde5ff">{nombre}</strong>. '
+        f'Corre el scoring diario sobre cada sesión del histórico y comprueba qué hizo el precio '
+        f'en los días siguientes. Solo usa el timeframe diario (1D).</div>',
+        unsafe_allow_html=True,
+    )
+
+    bc1, bc2, bc3, bc4 = st.columns(4)
+    with bc1:
+        bt_period = st.selectbox("Período histórico", ["1y", "2y", "3y", "5y"], index=1)
+    with bc2:
+        bt_fwd = st.slider("Días de retorno", min_value=3, max_value=15, value=5, step=1)
+    with bc3:
+        bt_buy_t = st.slider(
+            "Umbral COMPRAR (score ≥)",
+            min_value=1.0, max_value=4.0, value=2.2, step=0.1,
+            help="Score mínimo para emitir señal de compra. Sube para señales más selectivas.",
+        )
+    with bc4:
+        bt_sell_t = st.slider(
+            "Umbral VENDER (score ≤)",
+            min_value=-4.0, max_value=-1.0, value=-2.5, step=0.1,
+            help="Score máximo para emitir señal de venta. Bájalo (más negativo) para señales más selectivas.",
+        )
+
+    run_bt = st.button("▶  EJECUTAR BACKTEST", type="primary", use_container_width=True)
+
+    if run_bt:
+        with st.spinner(f"Descargando {bt_period} de histórico para {ticker} y calculando señales..."):
+            bt_result = run_backtest(ticker, period=bt_period, forward_days=bt_fwd,
+                                     buy_threshold=bt_buy_t, sell_threshold=bt_sell_t)
+        render_backtest_results(bt_result)
+    else:
+        st.markdown(
+            '<div style="background:rgba(255,255,255,0.015);border:1px dashed #0f1a36;'
+            'border-radius:16px;padding:40px;text-align:center;margin-top:20px">'
+            '<div style="color:#1e2c50;font-size:0.65rem;font-weight:900;letter-spacing:.2em;'
+            'text-transform:uppercase;margin-bottom:10px">Configura y lanza el backtest</div>'
+            '<div style="color:#374151;font-size:0.9rem">Elige el período y los días de retorno, '
+            'luego pulsa <strong style="color:#dde5ff">EJECUTAR BACKTEST</strong>.</div>'
+            '</div>',
+            unsafe_allow_html=True,
+        )
