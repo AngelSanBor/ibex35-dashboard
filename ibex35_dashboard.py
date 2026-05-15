@@ -337,13 +337,13 @@ def render_market_panel():
         f'<div style="display:flex;flex-wrap:wrap;gap:28px">{assets_html}</div>'
         f'<div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px;'
         f'padding-left:20px;border-left:1px solid #0f1428">'
-        f'<div style="display:flex;align-items:center;gap:8px">'
-        f'<span style="font-size:1.3rem">{sem_icon}</span>'
-        f'<span style="color:{sem_clr};font-size:1.0rem;font-weight:900;letter-spacing:-0.01em">'
+        f'<div style="display:flex;align-items:center;gap:10px">'
+        f'<span style="font-size:2.6rem;line-height:1">{sem_icon}</span>'
+        f'<span style="color:{sem_clr};font-size:2.0rem;font-weight:900;letter-spacing:-0.02em;line-height:1">'
         f'{sentiment}</span></div>'
-        f'<span style="color:#374151;font-size:0.75rem;text-align:right;max-width:220px">'
+        f'<span style="color:#374151;font-size:0.85rem;text-align:right;max-width:220px;margin-top:4px">'
         f'{sem_desc}</span>'
-        f'<span style="color:#1e2c50;font-size:0.6rem;letter-spacing:.08em">SENTIMIENTO DE MERCADO</span>'
+        f'<span style="color:#1e2c50;font-size:0.65rem;letter-spacing:.08em;margin-top:2px">SENTIMIENTO DE MERCADO</span>'
         f'</div></div></div>',
         unsafe_allow_html=True,
     )
@@ -524,7 +524,7 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-st.divider()
+st.markdown('<div style="height:6px"></div>', unsafe_allow_html=True)
 
 # ─────────────────────────────────────────────
 # PANEL DE MERCADO (siempre visible)
