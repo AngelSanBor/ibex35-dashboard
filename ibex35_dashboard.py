@@ -529,6 +529,11 @@ st.markdown('<div style="height:6px"></div>', unsafe_allow_html=True)
 # ─────────────────────────────────────────────
 # PANEL DE MERCADO (siempre visible)
 # ─────────────────────────────────────────────
+_rc1, _rc2 = st.columns([5, 1])
+with _rc2:
+    if st.button("🔄 Actualizar", use_container_width=True, help="Refresca precios de mercado"):
+        get_market_context.clear()
+        st.rerun()
 render_market_panel()
 st.caption(f"Fuente precio: {price_src}  ·  Cargado: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}")
 
