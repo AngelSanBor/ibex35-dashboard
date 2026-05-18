@@ -247,16 +247,19 @@ def get_market_context():
     result = {}
     for sym in MARKET_TICKERS:
         try:
-            fi = yf.Ticker(sym).fast_info
-            price = fi.last_price
-            prev  = fi.previous_close
-            chg   = ((price - prev) / prev * 100) if prev else 0.0
+            df = yf.Ticker(sym).history(period="5d", interval="1d")
+            if df is None or len(df) < 2:
+                result[sym] = None
+                continue
+            price      = float(df["Close"].iloc[-1])
+            prev_close = float(df["Close"].iloc[-2])
+            chg        = ((price - prev_close) / prev_close * 100) if prev_close else 0.0
             result[sym] = {
                 "price":    price,
-                "prev":     prev,
+                "prev":     prev_close,
                 "chg_pct":  chg,
-                "day_high": fi.day_high,
-                "day_low":  fi.day_low,
+                "day_high": float(df["High"].iloc[-1]),
+                "day_low":  float(df["Low"].iloc[-1]),
             }
         except Exception:
             result[sym] = None
