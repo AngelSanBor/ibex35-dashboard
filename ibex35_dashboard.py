@@ -244,23 +244,23 @@ BRENT_ALERT_PCT = 1.5
 
 @st.cache_data(ttl=900)
 def get_market_context():
+    today = datetime.utcnow().date()
     result = {}
     for sym in MARKET_TICKERS:
         try:
-            tk = yf.Ticker(sym)
-            if sym.startswith("^"):
-                # Índices (VIX, etc.): fast_info devuelve previous_close fiable
-                fi         = tk.fast_info
-                price      = float(fi.last_price)
-                prev_close = float(fi.previous_close)
-            else:
-                # Futuros (BZ=F, NQ=F, YM=F): usar histórico diario
-                df = tk.history(period="5d", interval="1d")
-                if df is None or len(df) < 2:
-                    result[sym] = None
-                    continue
-                price      = float(df["Close"].iloc[-1])
+            tk         = yf.Ticker(sym)
+            price      = float(tk.fast_info.last_price)
+            df         = tk.history(period="5d", interval="1d")
+            if df is None or len(df) < 2:
+                result[sym] = None
+                continue
+            last_date  = df.index[-1].date()
+            # Si el último bar del histórico es de hoy (bar parcial),
+            # el cierre anterior es el penúltimo; si no, es el último completo
+            if last_date >= today:
                 prev_close = float(df["Close"].iloc[-2])
+            else:
+                prev_close = float(df["Close"].iloc[-1])
             chg = ((price - prev_close) / prev_close * 100) if prev_close else 0.0
             result[sym] = {"price": price, "prev": prev_close, "chg_pct": chg}
         except Exception:
