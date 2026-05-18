@@ -234,7 +234,7 @@ TIMEFRAMES = [
 
 MARKET_TICKERS = {
     "BZ=F":  {"name": "Brent",      "icon": "🛢"},
-    "VX=F":  {"name": "VIX Fut",    "icon": "😨"},
+    "^VIX":  {"name": "VIX",        "icon": "😨"},
     "NQ=F":  {"name": "Nasdaq Fut", "icon": "📈"},
     "YM=F":  {"name": "Dow Fut",    "icon": "📊"},
 }
@@ -244,20 +244,20 @@ BRENT_ALERT_PCT = 1.5
 
 @st.cache_data(ttl=900)
 def get_market_context():
-    today = datetime.utcnow().date()
+    import pytz
+    today_et = datetime.now(pytz.timezone("America/New_York")).date()
     result = {}
     for sym in MARKET_TICKERS:
         try:
-            tk         = yf.Ticker(sym)
-            price      = float(tk.fast_info.last_price)
-            df         = tk.history(period="5d", interval="1d")
+            tk    = yf.Ticker(sym)
+            price = float(tk.fast_info.last_price)
+            df    = tk.history(period="5d", interval="1d")
             if df is None or len(df) < 2:
                 result[sym] = None
                 continue
-            last_date  = df.index[-1].date()
-            # Si el último bar del histórico es de hoy (bar parcial),
-            # el cierre anterior es el penúltimo; si no, es el último completo
-            if last_date >= today:
+            # Convertir índice del histórico a ET para comparar fechas correctamente
+            last_date = df.index[-1].tz_convert("America/New_York").date()
+            if last_date >= today_et:
                 prev_close = float(df["Close"].iloc[-2])
             else:
                 prev_close = float(df["Close"].iloc[-1])
@@ -269,7 +269,7 @@ def get_market_context():
 
 
 def _market_sentiment(ctx):
-    vix_d  = ctx.get("VX=F")
+    vix_d  = ctx.get("^VIX")
     nq_d   = ctx.get("NQ=F")
     ym_d   = ctx.get("YM=F")
     vix    = vix_d["price"] if vix_d else None
