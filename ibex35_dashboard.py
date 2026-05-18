@@ -247,20 +247,22 @@ def get_market_context():
     result = {}
     for sym in MARKET_TICKERS:
         try:
-            df = yf.Ticker(sym).history(period="5d", interval="1d")
-            if df is None or len(df) < 2:
-                result[sym] = None
-                continue
-            price      = float(df["Close"].iloc[-1])
-            prev_close = float(df["Close"].iloc[-2])
-            chg        = ((price - prev_close) / prev_close * 100) if prev_close else 0.0
-            result[sym] = {
-                "price":    price,
-                "prev":     prev_close,
-                "chg_pct":  chg,
-                "day_high": float(df["High"].iloc[-1]),
-                "day_low":  float(df["Low"].iloc[-1]),
-            }
+            tk = yf.Ticker(sym)
+            if sym.startswith("^"):
+                # Índices (VIX, etc.): fast_info devuelve previous_close fiable
+                fi         = tk.fast_info
+                price      = float(fi.last_price)
+                prev_close = float(fi.previous_close)
+            else:
+                # Futuros (BZ=F, NQ=F, YM=F): usar histórico diario
+                df = tk.history(period="5d", interval="1d")
+                if df is None or len(df) < 2:
+                    result[sym] = None
+                    continue
+                price      = float(df["Close"].iloc[-1])
+                prev_close = float(df["Close"].iloc[-2])
+            chg = ((price - prev_close) / prev_close * 100) if prev_close else 0.0
+            result[sym] = {"price": price, "prev": prev_close, "chg_pct": chg}
         except Exception:
             result[sym] = None
     return result
