@@ -234,7 +234,7 @@ TIMEFRAMES = [
 
 MARKET_TICKERS = {
     "BZ=F":  {"name": "Brent",      "icon": "🛢"},
-    "^VIX":  {"name": "VIX",        "icon": "😨"},
+    "VX=F":  {"name": "VIX Fut",    "icon": "😨"},
     "NQ=F":  {"name": "Nasdaq Fut", "icon": "📈"},
     "YM=F":  {"name": "Dow Fut",    "icon": "📊"},
 }
@@ -269,7 +269,7 @@ def get_market_context():
 
 
 def _market_sentiment(ctx):
-    vix_d  = ctx.get("^VIX")
+    vix_d  = ctx.get("VX=F")
     nq_d   = ctx.get("NQ=F")
     ym_d   = ctx.get("YM=F")
     vix    = vix_d["price"] if vix_d else None
