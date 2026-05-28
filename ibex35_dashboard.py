@@ -235,7 +235,7 @@ TIMEFRAMES = [
 
 MARKET_TICKERS = {
     "BZ=F":  {"name": "Brent",      "icon": "🛢"},
-    "^VIX":  {"name": "VIX",        "icon": "😨"},
+    "^VIX":  {"name": "VIX índice",  "icon": "😨"},
     "NQ=F":  {"name": "Nasdaq Fut", "icon": "📈"},
     "YM=F":  {"name": "Dow Fut",    "icon": "📊"},
 }
