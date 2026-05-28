@@ -1,6 +1,7 @@
 """
 IBEX 35 · Análisis IA Swing Trading
 Multi-timeframe + Backtesting + Noticias + Visión por IA
+Rev. 2 — resumen sencillo + fallos técnicos corregidos
 """
 
 import json
