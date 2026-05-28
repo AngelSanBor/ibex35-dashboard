@@ -37,22 +37,51 @@ def add_indicators(df):
     if not v.empty:
         df["Vol_SMA20"] = v.rolling(20).mean()
     if not v.empty:
+        # VWAP reiniciado por sesión (cada día), no acumulado sobre todo el histórico
         typical = (h + lo + c) / 3
-        df["VWAP"] = (typical * v).cumsum() / v.replace(0, np.nan).cumsum()
+        grp = df.index.normalize()
+        df["VWAP"] = (typical * v).groupby(grp).cumsum() / v.replace(0, np.nan).groupby(grp).cumsum()
     return df
 
 
-def detect_rsi_divergence(df, lookback=14):
+def _pivot_idx(arr, k=2, kind="low"):
+    """Índices de pivotes locales: un punto que es el mínimo/máximo de su ventana ±k."""
+    out = []
+    n   = len(arr)
+    for i in range(k, n - k):
+        if np.isnan(arr[i]):
+            continue
+        win = arr[i-k:i+k+1]
+        if kind == "low" and arr[i] == np.nanmin(win):
+            out.append(i)
+        elif kind == "high" and arr[i] == np.nanmax(win):
+            out.append(i)
+    return out
+
+
+def detect_rsi_divergence(df, lookback=40):
+    """Divergencia entre precio y RSI usando pivotes reales (no extremos del rango)."""
     if len(df) < lookback + 2:
         return None
-    close = df["Close"].squeeze().tail(lookback)
-    rsi   = df["RSI"].squeeze().tail(lookback).dropna()
-    if len(rsi) < 4:
+    sub   = df.tail(lookback)
+    close = sub["Close"].squeeze().to_numpy(dtype=float)
+    rsi   = sub["RSI"].squeeze().to_numpy(dtype=float)
+    if np.isnan(rsi).sum() > lookback * 0.5:
         return None
-    price_up = close.iloc[-1] > close.iloc[0]
-    rsi_up   = rsi.iloc[-1]   > rsi.iloc[0]
-    if price_up and not rsi_up:
-        return "bearish"
-    if not price_up and rsi_up:
-        return "bullish"
+
+    lows  = _pivot_idx(close, 2, "low")
+    highs = _pivot_idx(close, 2, "high")
+
+    # Divergencia alcista: precio hace mínimo más bajo pero RSI mínimo más alto
+    if len(lows) >= 2:
+        a, b = lows[-2], lows[-1]
+        if (not np.isnan(rsi[a]) and not np.isnan(rsi[b])
+                and close[b] < close[a] and rsi[b] > rsi[a]):
+            return "bullish"
+    # Divergencia bajista: precio hace máximo más alto pero RSI máximo más bajo
+    if len(highs) >= 2:
+        a, b = highs[-2], highs[-1]
+        if (not np.isnan(rsi[a]) and not np.isnan(rsi[b])
+                and close[b] > close[a] and rsi[b] < rsi[a]):
+            return "bearish"
     return None

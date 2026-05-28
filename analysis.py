@@ -16,6 +16,30 @@ except ImportError:
     _ANTHROPIC_OK = False
 
 
+# Umbrales únicos de decisión (coherentes en todos los timeframes y en el combinado)
+BUY_THRESHOLD  = 2.2
+SELL_THRESHOLD = -1.8
+
+
+def _key_levels(df, price, k=3):
+    """Soporte y resistencia basados en pivotes reales cercanos al precio,
+    no en el mínimo/máximo absoluto (que puede ser una mecha puntual)."""
+    hi = df["High"].squeeze().to_numpy(dtype=float)
+    lo = df["Low"].squeeze().to_numpy(dtype=float)
+    n  = len(df)
+    low_piv, high_piv = [], []
+    for i in range(k, n - k):
+        if lo[i] == np.nanmin(lo[i-k:i+k+1]):
+            low_piv.append(lo[i])
+        if hi[i] == np.nanmax(hi[i-k:i+k+1]):
+            high_piv.append(hi[i])
+    sups = [x for x in low_piv  if x < price]
+    ress = [x for x in high_piv if x > price]
+    support    = max(sups) if sups else float(np.nanmin(lo))
+    resistance = min(ress) if ress else float(np.nanmax(hi))
+    return support, resistance
+
+
 # ─────────────────────────────────────────────
 # PRECIO
 # ─────────────────────────────────────────────
@@ -141,6 +165,7 @@ def get_catalyst_data(ticker, earnings_dates_json):
 # ─────────────────────────────────────────────
 # ANÁLISIS POR TIMEFRAME
 # ─────────────────────────────────────────────
+@st.cache_data(ttl=180, show_spinner=False)
 def analyze_tf(ticker, label, period, interval, manual_vol_ratio=None):
     df = yf.download(ticker, period=period, interval=interval,
                      auto_adjust=True, progress=False)
@@ -248,14 +273,12 @@ def analyze_tf(ticker, label, period, interval, manual_vol_ratio=None):
     else:
         signals.append(("neut", "Sin divergencia RSI detectada"))
 
-    n_back     = min(40, len(df) // 3)
-    recent     = df.tail(n_back)
-    support    = float(recent["Low"].squeeze().min())
-    resistance = float(recent["High"].squeeze().max())
+    n_back            = min(60, max(20, len(df) // 2))
+    support, resistance = _key_levels(df.tail(n_back), price)
 
-    if score >= 2.5:
+    if score >= BUY_THRESHOLD:
         verdict = "COMPRAR"
-    elif score <= -2.0:
+    elif score <= SELL_THRESHOLD:
         verdict = "VENDER"
     else:
         verdict = "ESPERAR"
@@ -303,11 +326,11 @@ def combined_verdict(results, position):
     n_buy  = sum(1 for r in valid if r["verdict"] == "COMPRAR")
     n_sell = sum(1 for r in valid if r["verdict"] == "VENDER")
 
-    if   n_buy >= 2 and n_sell == 0: verdict = "COMPRAR"
-    elif n_sell >= 2 and n_buy == 0: verdict = "VENDER"
-    elif avg_score >= 2.2:           verdict = "COMPRAR"
-    elif avg_score <= -1.8:          verdict = "VENDER"
-    else:                            verdict = "MANTENER"
+    if   n_buy >= 2 and n_sell == 0:    verdict = "COMPRAR"
+    elif n_sell >= 2 and n_buy == 0:    verdict = "VENDER"
+    elif avg_score >= BUY_THRESHOLD:    verdict = "COMPRAR"
+    elif avg_score <= SELL_THRESHOLD:   verdict = "VENDER"
+    else:                               verdict = "MANTENER"
 
     div_alert = False
     for r in valid:

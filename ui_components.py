@@ -2,6 +2,45 @@ import streamlit as st
 
 
 # ─────────────────────────────────────────────
+# RESUMEN RÁPIDO — "¿Qué hago hoy?"
+# ─────────────────────────────────────────────
+def render_quick_summary(action_word, action_icon, clr, dim, why_line, chips, risk_line=None):
+    """Tarjeta clara y sencilla: qué hacer hoy + a qué precio + por qué en 1 frase.
+    chips: lista de tuplas (emoji, etiqueta, valor, color_valor)."""
+    chips_html = ""
+    for emoji, label, value, cclr in chips:
+        chips_html += (
+            f'<div style="flex:1 1 28%;min-width:96px;background:rgba(255,255,255,0.03);'
+            f'border:1px solid #0f1428;border-radius:12px;padding:12px 14px">'
+            f'<div style="color:#2d3a5a;font-size:0.62rem;font-weight:800;letter-spacing:.06em;'
+            f'text-transform:uppercase;margin-bottom:6px">{emoji} {label}</div>'
+            f'<div style="color:{cclr};font-size:1.3rem;font-weight:800;line-height:1">{value}</div></div>'
+        )
+    risk_html = ""
+    if risk_line:
+        risk_html = (
+            f'<div style="margin-top:14px;background:rgba(120,53,15,0.16);border:1px solid #5a3a12;'
+            f'border-radius:10px;padding:11px 15px;color:#fcd34d;font-size:0.92rem;line-height:1.5">'
+            f'{risk_line}</div>'
+        )
+    st.markdown(
+        f'<div style="background:{dim};border:1.5px solid {clr}55;border-radius:22px;'
+        f'padding:24px 26px;margin-bottom:10px;box-shadow:0 24px 60px rgba(0,0,0,0.5)">'
+        f'<div style="color:#2d3a5a;font-size:0.62rem;font-weight:900;letter-spacing:.2em;'
+        f'text-transform:uppercase;margin-bottom:10px">¿Qué hago hoy?</div>'
+        f'<div style="display:flex;align-items:center;gap:14px;margin-bottom:14px;flex-wrap:wrap">'
+        f'<span style="font-size:2.8rem;line-height:1">{action_icon}</span>'
+        f'<span style="color:{clr};font-size:2.8rem;font-weight:900;letter-spacing:-0.03em;'
+        f'line-height:1">{action_word}</span></div>'
+        f'<div style="color:#c9d4f0;font-size:1.05rem;line-height:1.6;margin-bottom:18px">{why_line}</div>'
+        f'<div style="display:flex;gap:10px;flex-wrap:wrap">{chips_html}</div>'
+        f'{risk_html}'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
+
+
+# ─────────────────────────────────────────────
 # ALERTA DE OBJETIVO / STOP
 # ─────────────────────────────────────────────
 def render_target_alert(position, price, atr_day):

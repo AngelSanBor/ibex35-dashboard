@@ -19,7 +19,7 @@ from backtester import run_backtest
 from news import get_news
 from ui_components import (
     render_backtest_results, render_catalyst, render_news,
-    render_position, render_scenarios, render_signal_table,
+    render_position, render_quick_summary, render_scenarios, render_signal_table,
     render_target_alert, render_tf_block, render_verdict,
 )
 
@@ -692,139 +692,181 @@ with tab_analysis:
         else:
             exec_line = f"No tocar la posición hasta cierre sobre {_r} con volumen o pérdida de {_s}."
 
-        # 1. Resultado principal
-        st.markdown('<div class="sec-header">RESULTADO DEL ANÁLISIS</div>', unsafe_allow_html=True)
-        render_verdict(verdict, a["score"], a["context"], exec_line)
-        render_scenarios(day_r, intra_tfs, cur_price)
+        # ═══ RESUMEN RÁPIDO (siempre visible) ═══
+        atr_day = day_r.get("atr") if day_r else None
+        day_rsi = day_r.get("rsi") if day_r else None
+        _trend  = "alcista" if (day_r and day_r.get("sma20") and cur_price > day_r["sma20"]) else "bajista"
 
-        # 2. Rendimiento relativo vs IBEX 35
-        idr_ret, ibex_ret = get_ibex_relative(ticker)
-        if idr_ret is not None:
-            diff         = idr_ret - ibex_ret
-            rel_weak     = (idr_ret < 0 and ibex_ret >= 0) or diff < -3.0
-            all_esperar  = all(r["verdict"] == "ESPERAR" for r in a["tf_results"] if r)
-            tech_weak_rs = (diff > 1.5) and (a["score"] < 0 or all_esperar)
-            if rel_weak:
-                st.markdown(
-                    '<div style="background:rgba(127,29,29,0.3);border:1px solid #991b1b;'
-                    'border-radius:10px;padding:12px 18px;margin-top:12px;'
-                    'color:#fca5a5;font-size:0.92rem;font-weight:600">'
-                    f'⚠️ Debilidad relativa confirmada — {nombre} cae mientras el IBEX 35 sube.</div>',
-                    unsafe_allow_html=True,
-                )
-            if tech_weak_rs:
-                st.markdown(
-                    f'<div class="banner-div-tech" style="margin-top:10px;color:#c4b5fd;font-size:0.9rem">'
-                    f'⚡ <strong>Divergencia fundamental/técnica:</strong> {nombre} supera al IBEX '
-                    f'<strong>+{diff:.1f}%</strong> en 20 días pero los indicadores técnicos no confirman '
-                    f'tendencia alcista.</div>',
-                    unsafe_allow_html=True,
-                )
-            st.markdown(
-                f'<div class="sec-header" style="margin-top:20px">'
-                f'RENDIMIENTO RELATIVO · {ticker} vs IBEX 35 (20 días)</div>',
-                unsafe_allow_html=True,
-            )
-            rc1, rc2, rc3 = st.columns(3)
-            rc1.metric(f"{ticker} (20d)",   f"{idr_ret:+.2f}%", delta_color="normal" if idr_ret >= 0 else "inverse")
-            rc2.metric("IBEX 35 (20d)",     f"{ibex_ret:+.2f}%", delta_color="normal" if ibex_ret >= 0 else "inverse")
-            rc3.metric("Rendimiento relativo", f"{diff:+.2f}%",
-                       "🟢 Fortaleza relativa" if diff >= 0 else "🔴 Debilidad relativa",
-                       delta_color="normal" if diff >= 0 else "inverse")
+        _buy  = op_sup_v
+        _tgt  = op_res_v
+        _stop = (op_sup_v - atr_day) if (op_sup_v and atr_day) else (cur_price - 2 * atr_day if atr_day else None)
 
-        # 3. Catalizador reciente
-        st.markdown('<div class="sec-header">CATALIZADOR RECIENTE · ÚLTIMOS 45 DÍAS</div>', unsafe_allow_html=True)
-        earnings_json = json.dumps(EARNINGS_DATES.get(ticker, []))
-        render_catalyst(get_catalyst_data(ticker, earnings_json))
+        def _eur(v):
+            return f"{v:.2f}€" if v else "—"
 
-        # 4. Tabla de validación
-        render_signal_table(a["tf_results"], meta)
+        _amap = {
+            "COMPRAR":             ("COMPRAR",  "🟢", "#4ade80", "rgba(74,222,128,0.08)"),
+            "VENDER":              ("VENDER",   "🔴", "#f87171", "rgba(248,113,113,0.08)"),
+            "MANTENER":            ("MANTENER", "🟡", "#fbbf24", "rgba(245,158,11,0.07)"),
+            "MANTENER CON ALERTA": ("MANTENER", "⚠️", "#fbbf24", "rgba(245,158,11,0.07)"),
+        }
+        _aw, _ai, _aclr, _adim = _amap.get(verdict, ("ESPERAR", "🟡", "#fbbf24", "rgba(245,158,11,0.07)"))
+        if verdict == "MANTENER" and position["shares"] == 0:
+            _aw, _ai = "ESPERAR", "⏳"
 
-        # 5. Detalle por temporalidad
-        st.markdown('<div class="sec-header">DETALLE POR TEMPORALIDAD</div>', unsafe_allow_html=True)
-        tc1, tc2, tc3 = st.columns(3)
-        for col, r in zip([tc1, tc2, tc3], a["tf_results"]):
-            with col:
-                render_tf_block(r)
+        _rsi_txt = f"RSI {day_rsi:.0f}" if day_rsi else "RSI n/d"
+        _pnl_txt = f" Llevas {position['pnl_pct']:+.1f}% en esta posición." if position["shares"] > 0 else ""
+        if meta.get("inactive"):
+            _why = ("El mercado está sin volumen ahora mismo, así que las señales no son fiables. "
+                    "Mejor esperar a que haya movimiento real antes de tocar nada." + _pnl_txt)
+        elif verdict == "COMPRAR":
+            _why = (f"Los indicadores apuntan al alza (tendencia {_trend}, {_rsi_txt}). "
+                    f"Buen momento para comprar o ampliar." + _pnl_txt)
+        elif verdict == "VENDER":
+            _why = (f"Señales de debilidad (tendencia {_trend}, {_rsi_txt}). Mejor reducir o salir." + _pnl_txt)
+        elif verdict == "MANTENER CON ALERTA":
+            _why = ("Hay señal de agotamiento cerca de resistencia. Mantén lo que tienes "
+                    "pero NO compres más hasta que confirme." + _pnl_txt)
+        elif position["shares"] == 0:
+            _why = (f"Todavía no hay señal clara para entrar (tendencia {_trend}, {_rsi_txt}). "
+                    f"Espera a que baje a la zona de compra o a que rompa la resistencia con fuerza.")
+        else:
+            _why = (f"Sin señal clara de cambio (tendencia {_trend}, {_rsi_txt}). "
+                    f"Mantén la posición y espera confirmación." + _pnl_txt)
 
-        # 6. Niveles clave
-        if day_r:
-            st.markdown('<div class="sec-header">NIVELES CLAVE · SOPORTE OPERATIVO Y ESTRUCTURAL</div>', unsafe_allow_html=True)
-            cur_price     = day_r["price"]
-            intraday_sups = [r["support"] for r in a["tf_results"][1:]
-                             if r and r.get("support") and r["support"] < cur_price]
-            op_sup   = max(intraday_sups) if intraday_sups else None
-            str_sup  = day_r["support"]
-            dist_op  = (cur_price - op_sup)  / cur_price * 100 if op_sup  else None
-            dist_str = (cur_price - str_sup) / cur_price * 100
-            dist_res = (day_r["resistance"] - cur_price) / cur_price * 100
+        if verdict == "VENDER":
+            _chips = [
+                ("🔴", "Vender cerca de",  _eur(cur_price), "#f87171"),
+                ("🛑", "Stop si aguantas", _eur(_stop),     "#fca5a5"),
+                ("👁", "Soporte clave",    _eur(_buy),      "#7dd3fc"),
+            ]
+        elif verdict in ("MANTENER", "MANTENER CON ALERTA") and position["shares"] > 0:
+            _chips = [
+                ("🚪", "No añadir hasta", _eur(_tgt),  "#fda4af"),
+                ("👁", "Aviso, vigilar",  _eur(_buy),  "#fcd34d"),
+                ("🛑", "Stop proteger",   _eur(_stop), "#fca5a5"),
+            ]
+        else:
+            _chips = [
+                ("🟢", "Comprar cerca de",  _eur(_buy),  "#4ade80"),
+                ("🎯", "Objetivo (vender)", _eur(_tgt),  "#86efac"),
+                ("🛑", "Stop (proteger)",   _eur(_stop), "#fca5a5"),
+            ]
 
-            nl1, nl2, nl3 = st.columns(3)
-            if op_sup:
-                nl1.markdown(
-                    f'<div class="level-op">'
-                    f'<div style="color:#92400e;font-size:0.7rem;font-weight:700;text-transform:uppercase;margin-bottom:4px">Soporte operativo (intraday)</div>'
-                    f'<div style="color:#fcd34d;font-size:1.4rem;font-weight:700">{op_sup:.3f} €</div>'
-                    f'<div style="color:#78350f;font-size:0.8rem;margin-top:4px">−{dist_op:.1f}% desde precio actual</div>'
-                    f'<div style="color:#92400e;font-size:0.78rem;margin-top:6px">⚠️ Pérdida activa escenario bajista</div>'
+        _sent_lbl, _, _, _ = _market_sentiment(get_market_context())
+        if _sent_lbl in ("TEMEROSO", "PÁNICO", "NEGATIVO"):
+            _risk = f"⚠️ Cuidado: el mercado global está nervioso hoy ({_sent_lbl}). Hay más riesgo de lo normal al operar."
+        elif _sent_lbl in ("POSITIVO", "MOD. POSITIVO"):
+            _risk = f"✅ El mercado global acompaña hoy ({_sent_lbl}), buen viento de cola."
+        else:
+            _risk = None
+
+        render_quick_summary(_aw, _ai, _aclr, _adim, _why, _chips, _risk)
+
+        if entries and atr_day:
+            render_target_alert(position, cur_price, atr_day)
+
+        # ═══ DETALLE PLEGABLE ═══
+        with st.expander("📊 Ver análisis técnico detallado"):
+            render_verdict(verdict, a["score"], a["context"], exec_line)
+            render_scenarios(day_r, intra_tfs, cur_price)
+            render_signal_table(a["tf_results"], meta)
+            st.markdown('<div class="sec-header">DETALLE POR TEMPORALIDAD</div>', unsafe_allow_html=True)
+            tc1, tc2, tc3 = st.columns(3)
+            for col, r in zip([tc1, tc2, tc3], a["tf_results"]):
+                with col:
+                    render_tf_block(r)
+
+            if day_r:
+                st.markdown('<div class="sec-header">NIVELES CLAVE · SOPORTE OPERATIVO Y ESTRUCTURAL</div>', unsafe_allow_html=True)
+                cur_price2    = day_r["price"]
+                intraday_sups = [r["support"] for r in a["tf_results"][1:]
+                                 if r and r.get("support") and r["support"] < cur_price2]
+                op_sup   = max(intraday_sups) if intraday_sups else None
+                str_sup  = day_r["support"]
+                dist_op  = (cur_price2 - op_sup)  / cur_price2 * 100 if op_sup else None
+                dist_str = (cur_price2 - str_sup) / cur_price2 * 100
+                dist_res = (day_r["resistance"] - cur_price2) / cur_price2 * 100
+
+                nl1, nl2, nl3 = st.columns(3)
+                if op_sup:
+                    nl1.markdown(
+                        f'<div class="level-op">'
+                        f'<div style="color:#92400e;font-size:0.7rem;font-weight:700;text-transform:uppercase;margin-bottom:4px">Soporte operativo (intraday)</div>'
+                        f'<div style="color:#fcd34d;font-size:1.4rem;font-weight:700">{op_sup:.3f} €</div>'
+                        f'<div style="color:#78350f;font-size:0.8rem;margin-top:4px">−{dist_op:.1f}% desde precio actual</div>'
+                        f'<div style="color:#92400e;font-size:0.78rem;margin-top:6px">⚠️ Pérdida activa escenario bajista</div>'
+                        f'</div>', unsafe_allow_html=True,
+                    )
+                else:
+                    nl1.markdown(
+                        '<div class="level-str"><div style="color:#4b5563;font-size:0.7rem;font-weight:700;text-transform:uppercase;margin-bottom:4px">Soporte operativo</div>'
+                        '<div style="color:#6b7280;font-size:0.9rem">Sin datos intraday</div></div>',
+                        unsafe_allow_html=True,
+                    )
+                nl2.markdown(
+                    f'<div class="level-str">'
+                    f'<div style="color:#374151;font-size:0.7rem;font-weight:700;text-transform:uppercase;margin-bottom:4px">Soporte estructural (diario)</div>'
+                    f'<div style="color:#7dd3fc;font-size:1.4rem;font-weight:700">{str_sup:.3f} €</div>'
+                    f'<div style="color:#374151;font-size:0.8rem;margin-top:4px">−{dist_str:.1f}% desde precio actual</div>'
+                    f'<div style="color:#1e3a5f;font-size:0.78rem;margin-top:6px">Invalidaría tesis a medio plazo</div>'
                     f'</div>', unsafe_allow_html=True,
                 )
-            else:
-                nl1.markdown(
-                    '<div class="level-str"><div style="color:#4b5563;font-size:0.7rem;font-weight:700;text-transform:uppercase;margin-bottom:4px">Soporte operativo</div>'
-                    '<div style="color:#6b7280;font-size:0.9rem">Sin datos intraday</div></div>',
-                    unsafe_allow_html=True,
+                nl3.markdown(
+                    f'<div class="level-str">'
+                    f'<div style="color:#374151;font-size:0.7rem;font-weight:700;text-transform:uppercase;margin-bottom:4px">Resistencia (diario)</div>'
+                    f'<div style="color:#fda4af;font-size:1.4rem;font-weight:700">{day_r["resistance"]:.3f} €</div>'
+                    f'<div style="color:#374151;font-size:0.8rem;margin-top:4px">+{dist_res:.1f}% hasta nivel</div>'
+                    f'<div style="color:#1e3a5f;font-size:0.78rem;margin-top:6px">Ruptura confirma escenario alcista</div>'
+                    f'</div>', unsafe_allow_html=True,
                 )
-            nl2.markdown(
-                f'<div class="level-str">'
-                f'<div style="color:#374151;font-size:0.7rem;font-weight:700;text-transform:uppercase;margin-bottom:4px">Soporte estructural (diario)</div>'
-                f'<div style="color:#7dd3fc;font-size:1.4rem;font-weight:700">{str_sup:.3f} €</div>'
-                f'<div style="color:#374151;font-size:0.8rem;margin-top:4px">−{dist_str:.1f}% desde precio actual</div>'
-                f'<div style="color:#1e3a5f;font-size:0.78rem;margin-top:6px">Invalidaría tesis a medio plazo</div>'
-                f'</div>', unsafe_allow_html=True,
+
+                st.markdown('<div style="height:14px"></div>', unsafe_allow_html=True)
+                mc1, mc2, mc3, mc4, mc5, mc6 = st.columns(6)
+                if day_r.get("sma20"): mc1.metric("SMA 20",      f"{day_r['sma20']:.3f} €")
+                if day_r.get("sma50"): mc2.metric("SMA 50",      f"{day_r['sma50']:.3f} €")
+                if day_r.get("bb_lo"): mc3.metric("BB Inferior", f"{day_r['bb_lo']:.3f} €")
+                if day_r.get("atr"):   mc4.metric("ATR (14d)",   f"{day_r['atr']:.3f} €")
+                if day_r.get("atr") and day_r["atr"] > 0:
+                    atr       = day_r["atr"]
+                    stop_px   = cur_price2 - 1.0 * atr
+                    target_px = cur_price2 + 2.0 * atr
+                    rr        = (target_px - cur_price2) / (cur_price2 - stop_px) if cur_price2 > stop_px else 0
+                    rr_str    = f"{rr:.1f}:1" + ("" if rr >= 1.5 else " ⚠️")
+                    mc5.metric("Stop (1×ATR)",     f"{stop_px:.3f} €")
+                    mc6.metric("Objetivo (2×ATR)", f"{target_px:.3f} €", rr_str,
+                               delta_color="normal" if rr >= 1.5 else "inverse")
+
+        # Rendimiento relativo vs IBEX 35
+        idr_ret, ibex_ret = get_ibex_relative(ticker)
+        if idr_ret is not None:
+            diff = idr_ret - ibex_ret
+            with st.expander(f"📈 Fuerza vs IBEX 35  ·  {'🟢 más fuerte' if diff >= 0 else '🔴 más débil'} ({diff:+.1f}%)"):
+                rc1, rc2, rc3 = st.columns(3)
+                rc1.metric(f"{ticker} (20d)", f"{idr_ret:+.2f}%", delta_color="normal" if idr_ret >= 0 else "inverse")
+                rc2.metric("IBEX 35 (20d)",   f"{ibex_ret:+.2f}%", delta_color="normal" if ibex_ret >= 0 else "inverse")
+                rc3.metric("Diferencia",      f"{diff:+.2f}%",
+                           "🟢 Fortaleza" if diff >= 0 else "🔴 Debilidad",
+                           delta_color="normal" if diff >= 0 else "inverse")
+
+        # Catalizador + noticias
+        with st.expander(f"📅 Catalizador y noticias  ·  {len(a.get('news', []))} titulares"):
+            st.markdown('<div class="sec-header">CATALIZADOR RECIENTE · ÚLTIMOS 45 DÍAS</div>', unsafe_allow_html=True)
+            earnings_json = json.dumps(EARNINGS_DATES.get(ticker, []))
+            render_catalyst(get_catalyst_data(ticker, earnings_json))
+            st.markdown(
+                f'<div class="sec-header">NOTICIAS RECIENTES · {nombre.upper()}'
+                f'<span style="font-weight:400;color:#374151;margin-left:12px">'
+                f'📡 {a.get("news_src","")}</span></div>',
+                unsafe_allow_html=True,
             )
-            nl3.markdown(
-                f'<div class="level-str">'
-                f'<div style="color:#374151;font-size:0.7rem;font-weight:700;text-transform:uppercase;margin-bottom:4px">Resistencia (diario)</div>'
-                f'<div style="color:#fda4af;font-size:1.4rem;font-weight:700">{day_r["resistance"]:.3f} €</div>'
-                f'<div style="color:#374151;font-size:0.8rem;margin-top:4px">+{dist_res:.1f}% hasta nivel</div>'
-                f'<div style="color:#1e3a5f;font-size:0.78rem;margin-top:6px">Ruptura confirma escenario alcista</div>'
-                f'</div>', unsafe_allow_html=True,
-            )
+            render_news(a["news"])
 
-            st.markdown('<div style="height:14px"></div>', unsafe_allow_html=True)
-            mc1, mc2, mc3, mc4, mc5, mc6 = st.columns(6)
-            if day_r.get("sma20"): mc1.metric("SMA 20",      f"{day_r['sma20']:.3f} €")
-            if day_r.get("sma50"): mc2.metric("SMA 50",      f"{day_r['sma50']:.3f} €")
-            if day_r.get("bb_lo"): mc3.metric("BB Inferior", f"{day_r['bb_lo']:.3f} €")
-            if day_r.get("atr"):   mc4.metric("ATR (14d)",   f"{day_r['atr']:.3f} €")
-            if day_r.get("atr") and day_r["atr"] > 0:
-                atr       = day_r["atr"]
-                stop_px   = cur_price - 1.0 * atr
-                target_px = cur_price + 2.0 * atr
-                rr        = (target_px - cur_price) / (cur_price - stop_px) if cur_price > stop_px else 0
-                rr_str    = f"{rr:.1f}:1" + ("" if rr >= 1.5 else " ⚠️")
-                mc5.metric("Stop (1×ATR)",     f"{stop_px:.3f} €")
-                mc6.metric("Objetivo (2×ATR)", f"{target_px:.3f} €", rr_str,
-                           delta_color="normal" if rr >= 1.5 else "inverse")
-
-        # 7. Noticias
-        st.markdown(
-            f'<div class="sec-header">NOTICIAS RECIENTES · {nombre.upper()}'
-            f'<span style="font-weight:400;color:#374151;margin-left:12px">'
-            f'📡 {a.get("news_src","")}</span></div>',
-            unsafe_allow_html=True,
-        )
-        render_news(a["news"])
-
-        # 8. Análisis de captura
+        # Análisis de captura (IA)
         if a.get("chart"):
-            st.markdown('<div class="sec-header">ANÁLISIS DEL GRÁFICO · CLAUDE IA</div>', unsafe_allow_html=True)
-            ic1, ic2 = st.columns([1, 1])
-            with ic1:
+            with st.expander("🖼️ Análisis del gráfico por IA"):
                 if a.get("img_bytes"):
                     st.image(a["img_bytes"], caption="Gráfico analizado", use_container_width=True)
-            with ic2:
                 st.markdown(
                     f'<div style="background:rgba(255,255,255,0.02);border:1px solid #0f1428;'
                     f'border-radius:16px;padding:22px 24px;font-size:0.92rem;color:#9ca3af;'
@@ -833,7 +875,7 @@ with tab_analysis:
                 )
 
         st.markdown(
-            f'<div style="color:#0f1428;font-size:0.7rem;text-align:right;margin-top:32px;letter-spacing:.04em">'
+            f'<div style="color:#0f1428;font-size:0.7rem;text-align:right;margin-top:24px;letter-spacing:.04em">'
             f'⚠️ Análisis orientativo · No es asesoramiento financiero · {a["ts"]}</div>',
             unsafe_allow_html=True,
         )
